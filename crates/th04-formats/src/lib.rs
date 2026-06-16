@@ -19,9 +19,11 @@
 //! | `.M26` / `.M86` | PMD music (YM2203 / YM2608) | 🔜 |
 //! | `.TXT` | dialogue (scrambled Shift-JIS) | 🔜 |
 
+pub mod bullet;
 pub mod cdg;
 pub mod enemy;
 pub mod enemy_vm;
+pub mod math;
 pub mod par;
 pub mod pi;
 #[path = "std.rs"]

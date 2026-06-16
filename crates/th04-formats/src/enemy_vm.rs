@@ -2,59 +2,31 @@
 //!
 //! This is the runtime half of the enemy VM (ReC98 interpreter `sub_155DD`):
 //! it holds the live enemy state (position, velocity, angle/speed, script
-//! pointer, blocking-frame counter, loop counter, bullet template) and advances
-//! it one game frame at a time, faithfully reproducing the original control
-//! flow — *blocking* instructions repeat their per-frame action for an
-//! operand-given number of frames before advancing, *immediate* instructions
-//! execute and fall through to the next instruction in the same frame.
+//! pointer, blocking-frame counter, loop counter, bullet template, autofire)
+//! and advances it one game frame at a time, faithfully reproducing the
+//! original control flow — *blocking* instructions repeat their per-frame
+//! action for an operand-given number of frames before advancing, *immediate*
+//! instructions execute and fall through to the next instruction the same
+//! frame.
 //!
-//! Motion uses TH04's 256-direction trig (master.lib `CosTable8`/`SinTable8`,
-//! 8.8 fixed) exactly as `vector2_near`: `vx = cos8(angle)·speed >> 8`.
-//!
-//! Bullet opcodes update the enemy's [`BulletTemplate`] and record fire events;
-//! actually spawning bullet objects is the bullet-system's job (next step), so
-//! `fire()` here just counts. Positions are subpixels (16 per pixel).
+//! Motion and aiming use TH04's 256-direction trig (see [`crate::math`]). The
+//! `fire` opcode and autofire spawn bullets into a [`BulletPool`]. Positions
+//! are subpixels (16/px).
 
+use crate::bullet::{BulletPool, BulletTemplate};
 use crate::enemy::op_len;
+use crate::math::{iatan2, vector2};
 
 const SUBPIXEL: i32 = 16;
 const ENEMY_W: i32 = 32;
 const ENEMY_H: i32 = 32;
-// TH04 playfield. TODO: confirm exact values from ReC98; only affects the frame
-// at which a clipped enemy is removed.
+// TODO: confirm exact TH04 playfield; only affects when a clipped enemy is removed.
 const PLAYFIELD_W: i32 = 384;
 const PLAYFIELD_H: i32 = 368;
 
-/// 8.8 cosine for a 256-direction angle (0 = +x/right, 64 = +y/down).
-fn cos8(a: u8) -> i32 {
-    (256.0 * (a as f64 * std::f64::consts::TAU / 256.0).cos()).round() as i32
-}
-fn sin8(a: u8) -> i32 {
-    (256.0 * (a as f64 * std::f64::consts::TAU / 256.0).sin()).round() as i32
-}
-/// Angle (256-direction) of the vector (dx, dy), matching ReC98 `iatan2`.
-fn iatan2(dy: i32, dx: i32) -> u8 {
-    let t = ((dy as f64).atan2(dx as f64) / std::f64::consts::TAU * 256.0).round() as i32;
-    (t & 0xff) as u8
-}
-
-/// Bullet spawn parameters an enemy script builds up before firing.
-#[derive(Default, Debug, Clone, Copy)]
-pub struct BulletTemplate {
-    pub spawn_type: u8,
-    pub origin_x: i16,
-    pub origin_y: i16,
-    pub group: u8,
-    pub angle: u8,
-    pub speed: u8,
-    pub patnum: u8,
-    pub count: u8,
-    pub delta: u8,
-}
-
 pub struct Enemy {
     pub x: i32,
-    pub y: i32, // subpixel position
+    pub y: i32,
     pub vx: i32,
     pub vy: i32,
     pub angle: u8,
@@ -70,21 +42,21 @@ pub struct Enemy {
     pub anim_frames_per_cel: u8,
     pub clip_x: bool,
     pub clip_y: bool,
-    pub alive: bool,        // EF_ALIVE (damageable/collidable)
-    pub killed: bool,       // script ended / clipped
+    pub alive: bool,
+    pub killed: bool,
     pub kills_player: bool,
     pub can_be_damaged: bool,
     pub autofire: bool,
+    pub autofire_interval: u8,
+    pub autofire_cur_frame: u8,
     pub spawned_left_half: bool,
     pub bullet: BulletTemplate,
-    /// Number of explicit `fire` opcodes executed (bullet objects TBD).
     pub fire_count: u32,
-    /// Simple deterministic RNG stand-in for `rand_angle` (not ZUN's randring).
     rng: u32,
 }
 
 impl Enemy {
-    /// Spawn an enemy at (x, y) subpixels running from the start of `script`.
+    /// Spawn an enemy at `(x, y)` subpixels, running from the start of a script.
     pub fn spawn(x: i32, y: i32) -> Self {
         Enemy {
             x,
@@ -109,16 +81,19 @@ impl Enemy {
             kills_player: false,
             can_be_damaged: false,
             autofire: false,
+            autofire_interval: 128,
+            autofire_cur_frame: 0,
             spawned_left_half: x < (PLAYFIELD_W / 2) * SUBPIXEL,
             bullet: BulletTemplate::default(),
             fire_count: 0,
-            rng: 0x1234,
+            rng: 0x1234_5678,
         }
     }
 
     fn set_velocity(&mut self) {
-        self.vx = (cos8(self.angle) * self.speed as i32) >> 8;
-        self.vy = (sin8(self.angle) * self.speed as i32) >> 8;
+        let (vx, vy) = vector2(self.angle, self.speed as i32);
+        self.vx = vx;
+        self.vy = vy;
     }
 
     fn rand8(&mut self) -> u8 {
@@ -126,34 +101,42 @@ impl Enemy {
         (self.rng >> 16) as u8
     }
 
+    fn fire(&mut self, pool: &mut BulletPool, player: (i32, i32)) {
+        self.fire_count += 1;
+        pool.spawn(&self.bullet, self.x, self.y, player);
+    }
+
     /// Apply velocity; return true if a clipped enemy left the playfield.
     fn motion(&mut self) -> bool {
         self.x += self.vx;
         self.y += self.vy;
         let mut clipped = false;
-        if self.clip_x {
-            let xv = (self.x + (ENEMY_W / 2) * SUBPIXEL) as u32;
-            if xv >= ((PLAYFIELD_W + ENEMY_W) * SUBPIXEL) as u32 {
-                clipped = true;
-            }
+        if self.clip_x && (self.x + (ENEMY_W / 2) * SUBPIXEL) as u32 >= ((PLAYFIELD_W + ENEMY_W) * SUBPIXEL) as u32 {
+            clipped = true;
         }
-        if self.clip_y {
-            let yv = (self.y + (ENEMY_H / 2) * SUBPIXEL) as u32;
-            if yv >= ((PLAYFIELD_H + ENEMY_H) * SUBPIXEL) as u32 {
-                clipped = true;
-            }
+        if self.clip_y && (self.y + (ENEMY_H / 2) * SUBPIXEL) as u32 >= ((PLAYFIELD_H + ENEMY_H) * SUBPIXEL) as u32 {
+            clipped = true;
         }
         clipped
     }
 
     /// Run one game frame of `script`. `scroll_dy` is this frame's vertical
-    /// scroll delta (subpixels), `player` the player position (subpixels).
-    pub fn step(&mut self, script: &[u8], scroll_dy: i32, player: (i32, i32)) {
+    /// scroll delta (subpixels), `player` the player position (subpixels);
+    /// fired bullets are added to `pool`.
+    pub fn step(&mut self, script: &[u8], scroll_dy: i32, player: (i32, i32), pool: &mut BulletPool) {
         if self.killed {
             return;
         }
-        // Immediate instructions fall through within the same frame; a blocking
-        // instruction ends the frame (returns).
+        // Autofire is handled by the enemy update loop, independently of the
+        // script: fire the template every [autofire_interval] frames.
+        if self.autofire {
+            self.autofire_cur_frame = self.autofire_cur_frame.wrapping_add(1);
+            if self.autofire_cur_frame >= self.autofire_interval {
+                self.autofire_cur_frame = 0;
+                self.fire(pool, player);
+            }
+        }
+
         loop {
             let ip = self.script_ip;
             let op = match script.get(ip) {
@@ -167,7 +150,6 @@ impl Enemy {
             let o = |i: usize| script.get(ip + 1 + i).copied().unwrap_or(0);
             let u16o = |i: usize| i16::from_le_bytes([o(i), o(i + 1)]);
 
-            // --- blocking movers: do per-frame motion, advance after N frames ---
             macro_rules! block {
                 ($frames:expr) => {{
                     if self.motion() {
@@ -181,6 +163,12 @@ impl Enemy {
                         self.cur_instr_frame += 1;
                     }
                     return;
+                }};
+            }
+            macro_rules! next {
+                () => {{
+                    self.script_ip += len;
+                    continue;
                 }};
             }
 
@@ -233,20 +221,16 @@ impl Enemy {
                 }
                 0x06 => block!(o(0)),
                 0x09 => {
-                    // aim at player: angle = iatan2 + operand, speed = operand
-                    self.angle = self.angle.wrapping_add(o(0));
-                    self.speed = o(1) as i16;
                     let a = iatan2(player.1 - self.y, player.0 - self.x);
                     self.angle = a.wrapping_add(o(0));
+                    self.speed = o(1) as i16;
                     self.set_velocity();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x0A => {
                     self.angle = self.angle.wrapping_add(o(0));
                     self.set_velocity();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x0B => {
                     if self.cur_instr_frame == 0 {
@@ -258,19 +242,17 @@ impl Enemy {
                 0x0C => {
                     self.speed = self.speed.wrapping_add((o(0) as i8) as i16);
                     self.set_velocity();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x0D | 0x0E => {
                     self.set_velocity();
-                    let frames;
-                    if op == 0x0E {
+                    let frames = if op == 0x0E {
                         self.vx += (o(0) as i8) as i32;
                         self.vy += (o(1) as i8) as i32;
-                        frames = o(2);
+                        o(2)
                     } else {
-                        frames = o(0);
-                    }
+                        o(0)
+                    };
                     let killed = self.motion();
                     self.angle = self.angle.wrapping_add(self.angle_delta);
                     if killed {
@@ -292,20 +274,17 @@ impl Enemy {
                     self.alive = true;
                     self.can_be_damaged = true;
                     self.kills_player = true;
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x11 => {
                     self.angle = self.rand8();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x12 => {
                     self.angle = o(0);
                     self.speed = o(1) as i16;
                     self.set_velocity();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x13 => {
                     self.angle = o(0);
@@ -314,20 +293,17 @@ impl Enemy {
                         self.angle = 0x80u8.wrapping_sub(self.angle);
                     }
                     self.set_velocity();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
                 0x14 => {
                     self.speed = o(0) as i16;
                     self.set_velocity();
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
-                // --- bullets: build template / fire (objects TBD) ---
+                // --- bullets ---
                 0x20 => {
-                    self.fire_count += 1;
-                    self.script_ip += len;
-                    continue;
+                    self.fire(pool, player);
+                    next!();
                 }
                 0x21 => {
                     self.autofire = false;
@@ -339,31 +315,30 @@ impl Enemy {
                     self.bullet.speed = o(7);
                     self.bullet.patnum = o(8);
                     self.bullet.count = o(9);
-                    self.script_ip += len;
-                    continue;
+                    next!();
                 }
-                0x22 => { self.bullet.spawn_type = o(0); self.script_ip += len; continue; }
-                0x23 => { self.bullet.origin_x = u16o(0); self.bullet.origin_y = u16o(2); self.script_ip += len; continue; }
-                0x24 => { self.bullet.angle = o(0); self.script_ip += len; continue; }
-                0x25 => { self.bullet.angle = self.bullet.angle.wrapping_add(o(0)); self.script_ip += len; continue; }
-                0x26 => { self.bullet.speed = o(0); self.script_ip += len; continue; }
-                0x27 => { self.bullet.speed = self.bullet.speed.wrapping_add(o(0)); self.script_ip += len; continue; }
-                0x28 => { self.bullet.group = o(0); self.script_ip += len; continue; }
-                0x29 => { self.bullet.count = o(0); self.script_ip += len; continue; }
-                0x2A => { self.bullet.patnum = o(0); self.script_ip += len; continue; }
-                0x2B => { self.autofire = true; self.script_ip += len; continue; }
-                0x2C => { /* autofire interval (rank/perf adjusted) */ self.script_ip += len; continue; }
-                0x2D => { self.bullet.angle = self.rand8(); self.script_ip += len; continue; }
-                0x2E => { self.autofire = false; self.script_ip += len; continue; }
-                0x30 => { self.bullet.delta = o(0); self.script_ip += len; continue; }
+                0x22 => { self.bullet.spawn_type = o(0); next!(); }
+                0x23 => { self.bullet.origin_x = u16o(0); self.bullet.origin_y = u16o(2); next!(); }
+                0x24 => { self.bullet.angle = o(0); next!(); }
+                0x25 => { self.bullet.angle = self.bullet.angle.wrapping_add(o(0)); next!(); }
+                0x26 => { self.bullet.speed = o(0); next!(); }
+                0x27 => { self.bullet.speed = self.bullet.speed.wrapping_add(o(0)); next!(); }
+                0x28 => { self.bullet.group = o(0); next!(); }
+                0x29 => { self.bullet.count = o(0); next!(); }
+                0x2A => { self.bullet.patnum = o(0); next!(); }
+                0x2B => { self.autofire = true; next!(); }
+                0x2C => { self.autofire_interval = o(0); next!(); }
+                0x2D => { self.bullet.angle = self.rand8(); next!(); }
+                0x2E => { self.autofire = false; next!(); }
+                0x30 => { self.bullet.delta = o(0); next!(); }
                 // --- control ---
                 0x80 | 0x81 => {
                     if self.loop_i < o(1) {
                         self.loop_i += 1;
                         if op == 0x80 {
-                            self.script_ip = o(0) as usize; // absolute
+                            self.script_ip = o(0) as usize;
                         } else {
-                            self.script_ip = self.script_ip.saturating_sub(o(0) as usize); // relative back
+                            self.script_ip = self.script_ip.saturating_sub(o(0) as usize);
                         }
                     } else {
                         self.loop_i = 0;
@@ -371,19 +346,19 @@ impl Enemy {
                     }
                     continue;
                 }
-                0x82 => { self.clip_x = true; self.script_ip += len; continue; }
-                0x83 => { self.clip_y = true; self.script_ip += len; continue; }
-                0x84 => { self.clip_x = true; self.clip_y = true; self.script_ip += len; continue; }
-                0x85 => { self.anim_cels = o(0); self.anim_frames_per_cel = o(1); self.script_ip += len; continue; }
-                0x86 => { /* play SE */ self.script_ip += len; continue; }
-                0x87 => { self.patnum_base = o(0); self.script_ip += len; continue; }
-                0x88 => { self.can_be_damaged = false; self.autofire = false; self.script_ip += len; continue; }
-                0x89 => { self.can_be_damaged = true; self.script_ip += len; continue; }
+                0x82 => { self.clip_x = true; next!(); }
+                0x83 => { self.clip_y = true; next!(); }
+                0x84 => { self.clip_x = true; self.clip_y = true; next!(); }
+                0x85 => { self.anim_cels = o(0); self.anim_frames_per_cel = o(1); next!(); }
+                0x86 => next!(), // play SE
+                0x87 => { self.patnum_base = o(0); next!(); }
+                0x88 => { self.can_be_damaged = false; self.autofire = false; next!(); }
+                0x89 => { self.can_be_damaged = true; next!(); }
                 0x8A => {
                     self.x = u16o(0) as i32;
                     self.y = u16o(2) as i32;
                     self.script_ip += len;
-                    return; // 1-frame (var_1 = 0)
+                    return; // 1-frame instruction
                 }
                 0x8B => {
                     self.x += u16o(0) as i32;
@@ -391,12 +366,11 @@ impl Enemy {
                     self.script_ip += len;
                     return;
                 }
-                0x8C => { self.kills_player = false; self.script_ip += len; continue; }
-                0x8D => { self.kills_player = true; self.script_ip += len; continue; }
-                0x8E => { self.patnum_base = self.patnum_base.wrapping_add(o(0)); self.script_ip += len; continue; }
-                0x8F => { self.script_ip += len; continue; } // tile-ring set (visual)
+                0x8C => { self.kills_player = false; next!(); }
+                0x8D => { self.kills_player = true; next!(); }
+                0x8E => { self.patnum_base = self.patnum_base.wrapping_add(o(0)); next!(); }
+                0x8F => next!(), // tile-ring set (visual)
                 _ => {
-                    // Undefined opcode: stop to avoid desync.
                     self.killed = true;
                     return;
                 }
@@ -411,24 +385,28 @@ mod tests {
 
     #[test]
     fn moves_straight_down() {
-        // move(angle=64 [down], speed=32, frames=10) ; end
-        let script = [0x01u8, 64, 32, 10, 0x00];
+        let script = [0x01u8, 64, 32, 10, 0x00]; // move(down, 32, 10); end
         let mut e = Enemy::spawn(0, 0);
+        let mut pool = BulletPool::new();
         for _ in 0..5 {
-            e.step(&script, 0, (0, 0));
+            e.step(&script, 0, (0, 0), &mut pool);
         }
-        assert!(e.y > 0, "should move down (+y)");
-        assert_eq!(e.vx, 0, "no horizontal drift at angle 64");
+        assert!(e.y > 0);
+        assert_eq!(e.vx, 0);
         assert!(!e.killed);
     }
 
     #[test]
-    fn fire_then_end() {
-        // fire ; end
-        let script = [0x20u8, 0x00];
+    fn fire_then_end_spawns_bullet() {
+        // bt_set ring of 4 ; fire ; end
+        let mut script = vec![0x21u8, 1, 0, 0, 0, 0, 0x26, 0, 32, 0, 4];
+        script.push(0x20); // fire
+        script.push(0x00); // end
         let mut e = Enemy::spawn(0, 0);
-        e.step(&script, 0, (0, 0));
+        let mut pool = BulletPool::new();
+        e.step(&script, 0, (0, 0), &mut pool);
         assert_eq!(e.fire_count, 1);
+        assert_eq!(pool.active_count(), 4); // ring of 4
         assert!(e.killed);
     }
 }
