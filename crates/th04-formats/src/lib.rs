@@ -22,3 +22,5 @@
 pub mod cdg;
 pub mod par;
 pub mod pi;
+#[path = "std.rs"]
+pub mod stage; // ".STD" stage data; module named `stage` to avoid shadowing `::std`

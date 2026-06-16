@@ -24,3 +24,7 @@ path = "examples/cdg2png.rs"
 [[example]]
 name = "pi2png"
 path = "examples/pi2png.rs"
+
+[[example]]
+name = "std_info"
+path = "examples/std_info.rs"

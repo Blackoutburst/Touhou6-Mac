@@ -140,7 +140,7 @@ Run it: `cargo run -p th04-formats --example unpack -- <東方幻想.郷> out/`
   - Still to do in Phase 2: `.BFT`/`.BB` tile sprites, `.MAP`/`.MPN` tilemaps; find stage CDG palettes.
 - Remaining member formats to parse: STD (gameplay), M86 (music), TXT (dialogue).
 - **Phase 2 — see something:** planar→RGBA decoder; render the title/`OP` screen in the existing wgpu window. First visible proof.
-- **Phase 3 — `.STD` VM:** parse + interpret stage/enemy/bullet bytecode; spawn enemies and bullets in a stage harness reusing TH06's collision/loop template.
+- **Phase 3 — `.STD` VM (parser DONE):** `stage.rs` parses the `.STD` file into map-section scroll order, per-section scroll speeds, enemy scripts (≤32), and the stage-timeline bytecode. Verified against `ST00..ST06.STD` (timeline ends exactly at EOF). **Next:** the actual VMs — the stage timeline interpreter (`std_run`, not yet in ReC98's decompiled C++ → reverse from asm/bytecode) and the per-enemy script interpreter, then spawn enemies/bullets in a stage harness reusing TH06's collision/loop template.
 - **Phase 4 — make it a game:** player ship + shot types, bosses, scoring, stage progression, dialogue. Lean on ReC98 opcode-by-opcode where finalized.
 - **Phase 5 — audio + web:** BGM (pre-rendered WAV first, FM synth later) + SFX; wire the WASM bring-your-own-`.hdi` upload (extractor logic ported to Rust/wasm).
 
