@@ -32,6 +32,8 @@ pub struct Enemy {
     pub angle: u8,
     pub speed: i16,
     pub angle_delta: u8,
+    /// Index into [`crate::stage::Std::enemy_scripts`] (set by the spawner).
+    pub script_index: usize,
     pub script_ip: usize,
     pub cur_instr_frame: u8,
     pub loop_i: u8,
@@ -66,6 +68,7 @@ impl Enemy {
             angle: 0,
             speed: 0,
             angle_delta: 0,
+            script_index: 0,
             script_ip: 0,
             cur_instr_frame: 0,
             loop_i: 0,

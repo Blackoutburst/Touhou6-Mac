@@ -26,6 +26,7 @@ pub mod enemy_vm;
 pub mod math;
 pub mod par;
 pub mod player;
+pub mod sim;
 pub mod pi;
 #[path = "std.rs"]
 pub mod stage; // ".STD" stage data; module named `stage` to avoid shadowing `::std`
