@@ -2,3 +2,8 @@ target/
 logs/
 web/pkg/
 .DS_Store
+
+# Copyrighted game data — bring your own copy (never commit assets)
+Touhou PC98 Collection/
+_extracted_th0*/
+*.hdi
