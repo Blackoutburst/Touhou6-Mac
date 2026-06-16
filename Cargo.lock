@@ -2601,6 +2601,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "th04-game"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "th04-formats",
+ "th06-engine",
+]
+
+[[package]]
 name = "th06"
 version = "0.1.0"
 dependencies = [

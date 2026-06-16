@@ -136,7 +136,8 @@ Run it: `cargo run -p th04-formats --example unpack -- <東方幻想.郷> out/`
   - `pi.rs` decodes the Yanagisawa **PI** format (`.PI`) — all full-screen art (title/opening/endings). PI embeds its own palette, decodes to chunky 4bpp, top-down. Ported from master.lib `graph_pi_load_pack.asm`. **Verified: `OP1.PI` renders as the full 東方幻想郷 ~Lotus Land Story title screen (Marisa + Reimu)**, plus ending images. Rust output matches the Python reference exactly.
   - There are **two archives**: `東方幻想.郷` (158, main game) and `幻想郷ED.DAT` (132, OP/title/menu/endings — key 0x2d). `par.rs` reads both.
   - **Open item:** CDG carries no palette; only `EYE.RGB` ships. Stage/sprite palettes live in `MAIN.EXE` or stage code (RE later). PI is unaffected (palette embedded).
-  - Still to do in Phase 2: `.BFT`/`.BB` tile sprites, `.MAP`/`.MPN` tilemaps, then draw the title in the wgpu engine window (offscreen `render_to_image` for headless verification).
+  - **Title renders in-engine (DONE):** `crates/th04-game` (new bin crate) wires `th04-formats` → `th06-engine`: decode `OP1.PI` → `create_texture` → `DrawCmd` → `render_to_image`, verified offscreen (the title screen renders through the real wgpu pipeline, letterboxed in 640×480). This proves the engine integration end-to-end.
+  - Still to do in Phase 2: `.BFT`/`.BB` tile sprites, `.MAP`/`.MPN` tilemaps; find stage CDG palettes.
 - Remaining member formats to parse: STD (gameplay), M86 (music), TXT (dialogue).
 - **Phase 2 — see something:** planar→RGBA decoder; render the title/`OP` screen in the existing wgpu window. First visible proof.
 - **Phase 3 — `.STD` VM:** parse + interpret stage/enemy/bullet bytecode; spawn enemies and bullets in a stage harness reusing TH06's collision/loop template.
