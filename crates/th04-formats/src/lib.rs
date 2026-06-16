@@ -21,6 +21,7 @@
 
 pub mod cdg;
 pub mod enemy;
+pub mod enemy_vm;
 pub mod par;
 pub mod pi;
 #[path = "std.rs"]

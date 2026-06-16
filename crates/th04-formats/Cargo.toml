@@ -32,3 +32,7 @@ path = "examples/std_info.rs"
 [[example]]
 name = "enemy_disasm"
 path = "examples/enemy_disasm.rs"
+
+[[example]]
+name = "sim_enemy"
+path = "examples/sim_enemy.rs"
