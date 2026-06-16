@@ -19,4 +19,5 @@
 //! | `.M26` / `.M86` | PMD music (YM2203 / YM2608) | 🔜 |
 //! | `.TXT` | dialogue (scrambled Shift-JIS) | 🔜 |
 
+pub mod cdg;
 pub mod par;

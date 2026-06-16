@@ -130,7 +130,9 @@ Run it: `cargo run -p th04-formats --example unpack -- <東方幻想.郷> out/`
 ## Proposed phased roadmap
 
 - **Phase 0 — tooling (done):** `.hdi` extractor; file inventory; ReC98 status pinned.
-- **Phase 1 — unpack assets (DONE):** `東方幻想.郷` cracked + verified (158/158); `th04-formats` crate with `par` reader + `unpack` example. Next member formats to parse: CDG/CD2 (gfx), STD (gameplay), BFT/BB (tiles), M86 (music), TXT (dialogue).
+- **Phase 1 — unpack assets (DONE):** `東方幻想.郷` cracked + verified (158/158); `th04-formats` crate with `par` reader + `unpack` example.
+- **Phase 2 — graphics decode (CDG DONE):** `cdg.rs` decodes `.CDG`/`.CD2` planar 16-colour images to RGBA (4 colour planes B/R/G/E + optional alpha, rows stored bottom-up). Verified by eye via the `cdg2png` example: the title eyecatch (`EYE*.CDG` + `EYE.RGB`) and a character sheet (`BB0.CDG`) decode to correct, upright images. **Open item:** CDG files carry no palette — only `EYE.RGB` ships in the archive; stage/sprite palettes live in `MAIN.EXE` or are set by stage code (to be RE'd). Still to do in Phase 2: `.BFT`/`.BB` tile sprites, `.MAP`/`.MPN` tilemaps, then draw `OP`/title in the wgpu window.
+- Remaining member formats to parse: STD (gameplay), M86 (music), TXT (dialogue).
 - **Phase 2 — see something:** planar→RGBA decoder; render the title/`OP` screen in the existing wgpu window. First visible proof.
 - **Phase 3 — `.STD` VM:** parse + interpret stage/enemy/bullet bytecode; spawn enemies and bullets in a stage harness reusing TH06's collision/loop template.
 - **Phase 4 — make it a game:** player ship + shot types, bosses, scoring, stage progression, dialogue. Lean on ReC98 opcode-by-opcode where finalized.

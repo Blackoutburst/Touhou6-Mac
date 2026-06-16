@@ -2596,6 +2596,9 @@ dependencies = [
 [[package]]
 name = "th04-formats"
 version = "0.1.0"
+dependencies = [
+ "image",
+]
 
 [[package]]
 name = "th06"

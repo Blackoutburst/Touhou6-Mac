@@ -9,6 +9,14 @@ license = "MIT"
 
 [dependencies]
 
+[dev-dependencies]
+# Only the examples need PNG encoding; the library stays zero-dep.
+image = "0.25"
+
 [[example]]
 name = "unpack"
 path = "examples/unpack.rs"
+
+[[example]]
+name = "cdg2png"
+path = "examples/cdg2png.rs"
