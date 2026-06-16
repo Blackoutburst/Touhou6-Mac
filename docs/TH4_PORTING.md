@@ -131,7 +131,12 @@ Run it: `cargo run -p th04-formats --example unpack -- <東方幻想.郷> out/`
 
 - **Phase 0 — tooling (done):** `.hdi` extractor; file inventory; ReC98 status pinned.
 - **Phase 1 — unpack assets (DONE):** `東方幻想.郷` cracked + verified (158/158); `th04-formats` crate with `par` reader + `unpack` example.
-- **Phase 2 — graphics decode (CDG DONE):** `cdg.rs` decodes `.CDG`/`.CD2` planar 16-colour images to RGBA (4 colour planes B/R/G/E + optional alpha, rows stored bottom-up). Verified by eye via the `cdg2png` example: the title eyecatch (`EYE*.CDG` + `EYE.RGB`) and a character sheet (`BB0.CDG`) decode to correct, upright images. **Open item:** CDG files carry no palette — only `EYE.RGB` ships in the archive; stage/sprite palettes live in `MAIN.EXE` or are set by stage code (to be RE'd). Still to do in Phase 2: `.BFT`/`.BB` tile sprites, `.MAP`/`.MPN` tilemaps, then draw `OP`/title in the wgpu window.
+- **Phase 2 — graphics decode (CDG + PI DONE):**
+  - `cdg.rs` decodes `.CDG`/`.CD2` planar 16-colour images to RGBA (4 colour planes B/R/G/E + optional alpha, rows bottom-up). Verified: eyecatch (`EYE*.CDG`+`EYE.RGB`) and `BB0.CDG` character sheet.
+  - `pi.rs` decodes the Yanagisawa **PI** format (`.PI`) — all full-screen art (title/opening/endings). PI embeds its own palette, decodes to chunky 4bpp, top-down. Ported from master.lib `graph_pi_load_pack.asm`. **Verified: `OP1.PI` renders as the full 東方幻想郷 ~Lotus Land Story title screen (Marisa + Reimu)**, plus ending images. Rust output matches the Python reference exactly.
+  - There are **two archives**: `東方幻想.郷` (158, main game) and `幻想郷ED.DAT` (132, OP/title/menu/endings — key 0x2d). `par.rs` reads both.
+  - **Open item:** CDG carries no palette; only `EYE.RGB` ships. Stage/sprite palettes live in `MAIN.EXE` or stage code (RE later). PI is unaffected (palette embedded).
+  - Still to do in Phase 2: `.BFT`/`.BB` tile sprites, `.MAP`/`.MPN` tilemaps, then draw the title in the wgpu engine window (offscreen `render_to_image` for headless verification).
 - Remaining member formats to parse: STD (gameplay), M86 (music), TXT (dialogue).
 - **Phase 2 — see something:** planar→RGBA decoder; render the title/`OP` screen in the existing wgpu window. First visible proof.
 - **Phase 3 — `.STD` VM:** parse + interpret stage/enemy/bullet bytecode; spawn enemies and bullets in a stage harness reusing TH06's collision/loop template.

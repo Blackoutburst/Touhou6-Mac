@@ -20,3 +20,7 @@ path = "examples/unpack.rs"
 [[example]]
 name = "cdg2png"
 path = "examples/cdg2png.rs"
+
+[[example]]
+name = "pi2png"
+path = "examples/pi2png.rs"
