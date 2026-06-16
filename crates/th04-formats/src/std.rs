@@ -21,6 +21,24 @@
 /// Hard cap from ReC98 (`STD_ENEMY_SCRIPT_COUNT`).
 pub const MAX_ENEMY_SCRIPTS: usize = 32;
 
+/// One enemy spawn from the stage timeline — `enemies_add(script, x, y, arg)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spawn {
+    /// Index into [`Std::enemy_scripts`].
+    pub script_index: u8,
+    /// Spawn position (subpixel, signed; e.g. y = -256 starts above the screen).
+    pub x: i16,
+    pub y: i16,
+    pub arg: u8,
+}
+
+/// All spawns that fire on a given stage frame.
+#[derive(Debug, Clone)]
+pub struct TimelineFrame {
+    pub frame: u16,
+    pub spawns: Vec<Spawn>,
+}
+
 pub struct Std {
     /// Tile-section id for each vertically-scrolled section, in order.
     pub map_section_order: Vec<u8>,
@@ -81,6 +99,42 @@ impl Std {
             timeline,
         })
     }
+
+    /// Decode the stage timeline into per-frame spawn lists (ReC98 `std_run`).
+    /// Each record is `u16 frame`, `u8 count`, then `count` × 8-byte spawn
+    /// entries; a `frame` of 0 terminates the timeline.
+    pub fn timeline_events(&self) -> Vec<TimelineFrame> {
+        let tl = &self.timeline;
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i + 2 <= tl.len() {
+            let frame = u16::from_le_bytes([tl[i], tl[i + 1]]);
+            if frame == 0 {
+                break;
+            }
+            i += 2;
+            let count = match tl.get(i) {
+                Some(&c) => c as usize,
+                None => break,
+            };
+            i += 1;
+            let mut spawns = Vec::with_capacity(count);
+            for _ in 0..count {
+                if i + 8 > tl.len() {
+                    break;
+                }
+                spawns.push(Spawn {
+                    script_index: tl[i],
+                    x: i16::from_le_bytes([tl[i + 1], tl[i + 2]]),
+                    y: i16::from_le_bytes([tl[i + 3], tl[i + 4]]),
+                    arg: tl[i + 5],
+                });
+                i += 8; // 6 read + 2 padding
+            }
+            out.push(TimelineFrame { frame, spawns });
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -99,5 +153,31 @@ mod tests {
         assert_eq!(s.scroll_speeds, [16, 16]);
         assert_eq!(s.enemy_scripts, vec![vec![0xAA, 0xBB]]);
         assert_eq!(s.timeline, [0xDE, 0xAD]);
+    }
+
+    #[test]
+    fn timeline_decodes() {
+        let mut tl = Vec::new();
+        tl.extend_from_slice(&100u16.to_le_bytes()); // frame 100
+        tl.push(1); // 1 spawn
+        tl.push(3); // script #3
+        tl.extend_from_slice(&50i16.to_le_bytes()); // x
+        tl.extend_from_slice(&(-256i16).to_le_bytes()); // y (above screen)
+        tl.push(7); // arg
+        tl.extend_from_slice(&[0, 0]); // padding
+        tl.extend_from_slice(&0u16.to_le_bytes()); // terminator
+        let s = Std {
+            map_section_order: vec![],
+            scroll_speeds: vec![],
+            enemy_scripts: vec![],
+            timeline: tl,
+        };
+        let ev = s.timeline_events();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].frame, 100);
+        assert_eq!(
+            ev[0].spawns,
+            vec![Spawn { script_index: 3, x: 50, y: -256, arg: 7 }]
+        );
     }
 }

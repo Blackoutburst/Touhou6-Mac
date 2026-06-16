@@ -23,5 +23,16 @@ fn main() {
     for (i, e) in s.enemy_scripts.iter().enumerate() {
         println!("     #{:<2} {} bytes", i, e.len());
     }
-    println!("  timeline     : {} bytes", s.timeline.len());
+    let events = s.timeline_events();
+    let spawns: usize = events.iter().map(|e| e.spawns.len()).sum();
+    println!("  timeline     : {} bytes, {} spawn-frames, {} enemies", s.timeline.len(), events.len(), spawns);
+    for e in events.iter().take(8) {
+        let s0 = e.spawns.first();
+        println!(
+            "     frame {:>5}: {} enemy(s){}",
+            e.frame,
+            e.spawns.len(),
+            s0.map(|s| format!("  e.g. script#{} @({},{}) arg={}", s.script_index, s.x, s.y, s.arg)).unwrap_or_default()
+        );
+    }
 }
