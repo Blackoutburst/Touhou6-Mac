@@ -20,6 +20,7 @@
 //! | `.TXT` | dialogue (scrambled Shift-JIS) | 🔜 |
 
 pub mod cdg;
+pub mod enemy;
 pub mod par;
 pub mod pi;
 #[path = "std.rs"]

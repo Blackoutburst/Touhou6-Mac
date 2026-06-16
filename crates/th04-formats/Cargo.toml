@@ -28,3 +28,7 @@ path = "examples/pi2png.rs"
 [[example]]
 name = "std_info"
 path = "examples/std_info.rs"
+
+[[example]]
+name = "enemy_disasm"
+path = "examples/enemy_disasm.rs"
