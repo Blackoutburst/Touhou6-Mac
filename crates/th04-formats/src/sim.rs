@@ -7,10 +7,15 @@
 //! hitboxes: player shots damage enemies (kill → score), and enemy bullets that
 //! reach the player count as hits. Positions are subpixels (16/px).
 
+use crate::boss::{Boss, BOSS_HIT};
 use crate::bullet::BulletPool;
 use crate::enemy_vm::Enemy;
 use crate::player::{Input, Player};
 use crate::stage::{Std, TimelineFrame};
+
+// Stage-1 boss placeholder stats (TODO: real values from MAIN.EXE).
+const BOSS_HP: i32 = 1500;
+const BOSS_PHASES: u8 = 4;
 
 const SUBPIXEL: i32 = 16;
 const SCROLL_DY: i32 = 16; // 1px/frame placeholder
@@ -42,6 +47,7 @@ pub struct StageSim {
     pub enemies_killed: u32,
     pub player_hits: u32,
     pub phase: Phase,
+    pub boss: Option<Boss>,
 }
 
 impl StageSim {
@@ -60,6 +66,7 @@ impl StageSim {
             enemies_killed: 0,
             player_hits: 0,
             phase: Phase::Trash,
+            boss: None,
         }
     }
 
@@ -105,6 +112,13 @@ impl StageSim {
             e.step(script, SCROLL_DY, player_pos, &mut self.bullets);
         }
 
+        // 2b. Boss (during the boss phase).
+        if self.phase == Phase::Boss {
+            if let Some(b) = self.boss.as_mut() {
+                b.update(player_pos, &mut self.bullets);
+            }
+        }
+
         // 3. Move bullets.
         self.bullets.update();
 
@@ -130,6 +144,18 @@ impl StageSim {
             }
         }
 
+        // 4b. Player shots vs boss.
+        if let Some(b) = self.boss.as_mut() {
+            if !b.defeated {
+                for s in self.player.shots.iter_mut() {
+                    if s.active && (s.x - b.x).abs() < BOSS_HIT && (s.y - b.y).abs() < BOSS_HIT {
+                        b.damage(s.damage);
+                        s.active = false;
+                    }
+                }
+            }
+        }
+
         // 5. Enemy bullets / bodies vs player (only when vulnerable).
         if !self.player.invincible() && !self.player.gameover {
             let (px, py) = (self.player.x, self.player.y);
@@ -149,6 +175,13 @@ impl StageSim {
                     }
                 }
             }
+            if !died {
+                if let Some(b) = &self.boss {
+                    if !b.defeated && (b.x - px).abs() < BOSS_HIT && (b.y - py).abs() < BOSS_HIT {
+                        died = true;
+                    }
+                }
+            }
             if died {
                 self.player_hits += 1;
                 if self.player.hit() {
@@ -164,13 +197,13 @@ impl StageSim {
         self.enemies.retain(|e| !e.killed);
 
         // 7. Stage progression. When the trash timeline is exhausted and the
-        //    field is clear, the boss would appear (TODO). Until the boss is
-        //    implemented, fall straight through to Cleared.
+        //    field is clear, the boss appears; once defeated, the stage clears.
         if self.phase == Phase::Trash && self.ev_i >= self.events.len() && self.enemies.is_empty() {
             self.phase = Phase::Boss;
+            self.boss = Some(Boss::new(BOSS_HP, BOSS_PHASES));
         }
-        if self.phase == Phase::Boss {
-            self.phase = Phase::Cleared; // no boss yet
+        if self.phase == Phase::Boss && self.boss.as_ref().map(Boss::done).unwrap_or(true) {
+            self.phase = Phase::Cleared;
         }
 
         self.frame = self.frame.wrapping_add(1);

@@ -20,6 +20,7 @@
 //! | `.TXT` | dialogue (scrambled Shift-JIS) | 🔜 |
 
 pub mod bft;
+pub mod boss;
 pub mod bullet;
 pub mod cdg;
 pub mod enemy;

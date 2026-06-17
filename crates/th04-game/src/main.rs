@@ -13,8 +13,9 @@ use th04_formats::map::{self, Map};
 use th04_formats::mpn::Mpn;
 use th04_formats::par::Archive;
 use th04_formats::pi::Pi;
+use th04_formats::boss::Boss;
 use th04_formats::player::Input;
-use th04_formats::sim::StageSim;
+use th04_formats::sim::{Phase, StageSim};
 use th04_formats::stage::Std;
 use th06_engine::{DrawCmd, Engine, SCREEN_H, SCREEN_W};
 
@@ -57,6 +58,8 @@ fn stage(a: &[String]) {
     let until: u32 = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(300);
     let out = a.get(3).cloned().unwrap_or_else(|| "stage.png".into());
 
+    let force_boss = a.get(2).map(|s| s == "boss").unwrap_or(false);
+
     let std = Std::parse(&arc.get(std_name).unwrap()).expect("parse STD");
     let section_order = std.map_section_order.clone();
     let mut sim = StageSim::new(std, 0);
@@ -67,6 +70,20 @@ fn stage(a: &[String]) {
         input.left = (f / 64) % 2 == 0;
         input.right = !input.left;
         sim.step(&input);
+    }
+    // Demo: drop straight into the boss fight for a screenshot.
+    if force_boss {
+        sim.player.gameover = false;
+        sim.player.lives = 2;
+        sim.phase = Phase::Boss;
+        if sim.boss.is_none() {
+            sim.boss = Some(Boss::new(1500, 4));
+        }
+        for _ in 0..96 {
+            let mut input = Input::default();
+            input.shoot = true;
+            sim.step(&input);
+        }
     }
 
     let engine = Engine::new();
@@ -177,6 +194,12 @@ fn stage(a: &[String]) {
             None => cmds.push(solid(px, py, 18.0, 18.0, [1.0, 0.3, 0.3, 1.0])),
         }
     }
+    // Boss (placeholder marker until the boss CD2 sprites are mapped).
+    if let Some(b) = &sim.boss {
+        if !b.defeated {
+            cmds.push(solid(b.x as f32 / 16.0, b.y as f32 / 16.0, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0]));
+        }
+    }
     // Bullets + player shots as markers (their sprite sheets aren't decoded yet).
     for b in &sim.bullets.bullets {
         if b.active {
@@ -200,7 +223,8 @@ fn stage(a: &[String]) {
     let frame_img = engine.render_to_image(&cmds, &texes, None);
     image::save_buffer(&out, &frame_img, SCREEN_W, SCREEN_H, image::ColorType::Rgba8).expect("save png");
     println!(
-        "frame {}: {} enemies, {} bullets, {} shots, score {} -> {}",
-        until, sim.alive_enemies(), sim.bullets.active_count(), sim.player.active_shots(), sim.score, out
+        "{:?} frame {}: {} enemies, {} bullets, {} shots, boss_hp {:?} -> {}",
+        sim.phase, until, sim.alive_enemies(), sim.bullets.active_count(), sim.player.active_shots(),
+        sim.boss.as_ref().map(|b| b.hp), out
     );
 }
