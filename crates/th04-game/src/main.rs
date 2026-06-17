@@ -13,7 +13,7 @@ use th04_formats::map::{self, Map};
 use th04_formats::mpn::Mpn;
 use th04_formats::par::Archive;
 use th04_formats::pi::Pi;
-use th04_formats::boss::Boss;
+use th04_formats::boss::{Boss, Midboss};
 use th04_formats::player::Input;
 use th04_formats::sim::{Phase, StageSim};
 use th04_formats::stage::Std;
@@ -59,6 +59,7 @@ fn stage(a: &[String]) {
     let out = a.get(3).cloned().unwrap_or_else(|| "stage.png".into());
 
     let force_boss = a.get(2).map(|s| s == "boss").unwrap_or(false);
+    let force_midboss = a.get(2).map(|s| s == "midboss").unwrap_or(false);
 
     let std = Std::parse(&arc.get(std_name).unwrap()).expect("parse STD");
     let section_order = std.map_section_order.clone();
@@ -71,15 +72,19 @@ fn stage(a: &[String]) {
         input.right = !input.left;
         sim.step(&input);
     }
-    // Demo: drop straight into the boss fight for a screenshot.
-    if force_boss {
+    // Demo: drop straight into the boss / midboss fight for a screenshot.
+    if force_boss || force_midboss {
         sim.player.gameover = false;
         sim.player.lives = 2;
-        sim.phase = Phase::Boss;
-        if sim.boss.is_none() {
-            sim.boss = Some(Boss::new(1500, 4));
+        if force_boss {
+            sim.phase = Phase::Boss;
+            if sim.boss.is_none() {
+                sim.boss = Some(Boss::new(1500, 4));
+            }
+        } else if sim.midboss.is_none() {
+            sim.midboss = Some(Midboss::new(192 * 16));
         }
-        for _ in 0..96 {
+        for _ in 0..160 {
             let mut input = Input::default();
             input.shoot = true;
             sim.step(&input);
@@ -194,10 +199,15 @@ fn stage(a: &[String]) {
             None => cmds.push(solid(px, py, 18.0, 18.0, [1.0, 0.3, 0.3, 1.0])),
         }
     }
-    // Boss (placeholder marker until the boss CD2 sprites are mapped).
+    // Boss / midboss (placeholder markers until the CD2 sprites are mapped).
     if let Some(b) = &sim.boss {
         if !b.defeated {
             cmds.push(solid(b.x as f32 / 16.0, b.y as f32 / 16.0, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0]));
+        }
+    }
+    if let Some(m) = &sim.midboss {
+        if !m.defeated {
+            cmds.push(solid(m.x as f32 / 16.0, m.y as f32 / 16.0, 40.0, 40.0, [0.3, 0.9, 0.9, 1.0]));
         }
     }
     // Bullets + player shots as markers (their sprite sheets aren't decoded yet).

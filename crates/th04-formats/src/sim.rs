@@ -7,15 +7,20 @@
 //! hitboxes: player shots damage enemies (kill → score), and enemy bullets that
 //! reach the player count as hits. Positions are subpixels (16/px).
 
-use crate::boss::{Boss, BOSS_HIT};
+use crate::boss::{Boss, Midboss, BOSS_HIT};
 use crate::bullet::BulletPool;
 use crate::enemy_vm::Enemy;
 use crate::player::{Input, Player};
 use crate::stage::{Std, TimelineFrame};
 
-// Stage-1 boss placeholder stats (TODO: real values from MAIN.EXE).
+// Stage-1 boss placeholder stats (TODO: real values from the MAIN.EXE overlay,
+// which ReC98 hasn't decompiled).
 const BOSS_HP: i32 = 1500;
 const BOSS_PHASES: u8 = 4;
+// Midboss-1 hitbox half-extent (RE: 24×16) and activation frame (placeholder
+// until the per-stage value is located).
+const MIDBOSS_HIT: i32 = 24 * SUBPIXEL;
+const MIDBOSS_FRAME: u16 = 2400;
 
 const SUBPIXEL: i32 = 16;
 const SCROLL_DY: i32 = 16; // 1px/frame placeholder
@@ -48,6 +53,8 @@ pub struct StageSim {
     pub player_hits: u32,
     pub phase: Phase,
     pub boss: Option<Boss>,
+    pub midboss: Option<Midboss>,
+    midboss_done: bool,
 }
 
 impl StageSim {
@@ -67,6 +74,8 @@ impl StageSim {
             player_hits: 0,
             phase: Phase::Trash,
             boss: None,
+            midboss: None,
+            midboss_done: false,
         }
     }
 
@@ -83,16 +92,22 @@ impl StageSim {
     pub fn step(&mut self, input: &Input) {
         self.player.update(input);
 
-        // 1. Spawn enemies whose timeline frame has arrived (Trash phase only).
+        // 1. Trash timeline (the midboss interrupts it mid-stage).
         if self.phase == Phase::Trash {
-            while self.ev_i < self.events.len() && self.events[self.ev_i].frame <= self.frame {
-                for sp in &self.events[self.ev_i].spawns {
-                    let mut e = Enemy::spawn(sp.x as i32, sp.y as i32);
-                    e.script_index = sp.script_index as usize;
-                    self.enemies.push(e);
-                    self.enemies_spawned += 1;
+            if !self.midboss_done && self.midboss.is_none() && self.frame >= MIDBOSS_FRAME {
+                self.midboss = Some(Midboss::new(192 * SUBPIXEL));
+            }
+            // Timeline pauses while the midboss is on screen.
+            if self.midboss.is_none() {
+                while self.ev_i < self.events.len() && self.events[self.ev_i].frame <= self.frame {
+                    for sp in &self.events[self.ev_i].spawns {
+                        let mut e = Enemy::spawn(sp.x as i32, sp.y as i32);
+                        e.script_index = sp.script_index as usize;
+                        self.enemies.push(e);
+                        self.enemies_spawned += 1;
+                    }
+                    self.ev_i += 1;
                 }
-                self.ev_i += 1;
             }
         }
 
@@ -117,6 +132,10 @@ impl StageSim {
             if let Some(b) = self.boss.as_mut() {
                 b.update(player_pos, &mut self.bullets);
             }
+        }
+        // 2c. Midboss.
+        if let Some(m) = self.midboss.as_mut() {
+            m.update(&mut self.bullets);
         }
 
         // 3. Move bullets.
@@ -144,12 +163,22 @@ impl StageSim {
             }
         }
 
-        // 4b. Player shots vs boss.
+        // 4b. Player shots vs boss / midboss.
         if let Some(b) = self.boss.as_mut() {
             if !b.defeated {
                 for s in self.player.shots.iter_mut() {
                     if s.active && (s.x - b.x).abs() < BOSS_HIT && (s.y - b.y).abs() < BOSS_HIT {
                         b.damage(s.damage);
+                        s.active = false;
+                    }
+                }
+            }
+        }
+        if let Some(m) = self.midboss.as_mut() {
+            if !m.defeated {
+                for s in self.player.shots.iter_mut() {
+                    if s.active && (s.x - m.x).abs() < MIDBOSS_HIT && (s.y - m.y).abs() < MIDBOSS_HIT {
+                        m.damage(s.damage);
                         s.active = false;
                     }
                 }
@@ -182,6 +211,13 @@ impl StageSim {
                     }
                 }
             }
+            if !died {
+                if let Some(m) = &self.midboss {
+                    if !m.defeated && (m.x - px).abs() < MIDBOSS_HIT && (m.y - py).abs() < MIDBOSS_HIT {
+                        died = true;
+                    }
+                }
+            }
             if died {
                 self.player_hits += 1;
                 if self.player.hit() {
@@ -196,9 +232,20 @@ impl StageSim {
         // 6. Drop dead enemies, advance time.
         self.enemies.retain(|e| !e.killed);
 
-        // 7. Stage progression. When the trash timeline is exhausted and the
-        //    field is clear, the boss appears; once defeated, the stage clears.
-        if self.phase == Phase::Trash && self.ev_i >= self.events.len() && self.enemies.is_empty() {
+        // Midboss defeated → resume the trash timeline.
+        if self.midboss.as_ref().map(Midboss::done).unwrap_or(false) {
+            self.midboss = None;
+            self.midboss_done = true;
+        }
+
+        // 7. Stage progression. After the midboss, once the trash timeline is
+        //    exhausted and the field is clear, the boss appears; once defeated,
+        //    the stage clears.
+        if self.phase == Phase::Trash
+            && self.midboss_done
+            && self.ev_i >= self.events.len()
+            && self.enemies.is_empty()
+        {
             self.phase = Phase::Boss;
             self.boss = Some(Boss::new(BOSS_HP, BOSS_PHASES));
         }

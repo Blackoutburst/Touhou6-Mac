@@ -104,9 +104,114 @@ impl Boss {
     }
 }
 
+/// Stage-1 midboss, reverse-engineered from `midboss1_update` (th04_main.asm).
+/// Phases: entrance (descend) → settle → attack. The attack is `sub_13FB2`:
+/// every 8 frames fire a symmetric pair of blue Bullet16s at angle θ and
+/// 128−θ, with θ stepping by 0x0C each shot (a sweeping spray, speed 2px). HP
+/// 620 (the HUD bar maximum). It activates mid-stage and pauses the trash
+/// timeline until defeated.
+pub const MIDBOSS1_HP: i32 = 620;
+const MIDBOSS_ENTRANCE_FRAMES: u32 = 96;
+const MIDBOSS_TARGET_Y: i32 = 96 * SUBPIXEL;
+
+pub struct Midboss {
+    pub x: i32,
+    pub y: i32,
+    pub hp: i32,
+    pub phase: u8, // 0 = entrance, 1 = attack
+    pub phase_frame: u32,
+    pub defeated: bool,
+    pub defeat_frame: u32,
+    sweep: u8, // byte_25594
+}
+
+impl Midboss {
+    pub fn new(x: i32) -> Self {
+        Midboss {
+            x,
+            y: -32 * SUBPIXEL,
+            hp: MIDBOSS1_HP,
+            phase: 0,
+            phase_frame: 0,
+            defeated: false,
+            defeat_frame: 0,
+            sweep: 1,
+        }
+    }
+
+    pub fn done(&self) -> bool {
+        self.defeated && self.defeat_frame >= BOSS_DEFEAT_FRAMES
+    }
+
+    pub fn damage(&mut self, dmg: i32) {
+        if self.defeated || self.phase == 0 {
+            return; // invulnerable during entrance
+        }
+        self.hp -= dmg;
+        if self.hp <= 0 {
+            self.defeated = true;
+            self.defeat_frame = 0;
+        }
+    }
+
+    pub fn update(&mut self, pool: &mut BulletPool) {
+        if self.defeated {
+            self.defeat_frame += 1;
+            return;
+        }
+        self.phase_frame += 1;
+        match self.phase {
+            0 => {
+                // Entrance: descend into position.
+                self.y += 2 * SUBPIXEL;
+                if self.y >= MIDBOSS_TARGET_Y && self.phase_frame >= MIDBOSS_ENTRANCE_FRAMES {
+                    self.y = MIDBOSS_TARGET_Y;
+                    self.phase = 1;
+                    self.phase_frame = 0;
+                    self.sweep = 1;
+                }
+            }
+            _ => {
+                // Attack: sub_13FB2 — symmetric sweeping pair every 8 frames.
+                if self.phase_frame % 8 == 0 {
+                    let t = BulletTemplate {
+                        group: group::SINGLE,
+                        count: 1,
+                        speed: 2 * 16,
+                        angle: self.sweep,
+                        ..Default::default()
+                    };
+                    pool.spawn(&t, self.x, self.y - SUBPIXEL, (0, 0));
+                    let mut t2 = t;
+                    t2.angle = 0x80u8.wrapping_sub(self.sweep);
+                    pool.spawn(&t2, self.x, self.y - SUBPIXEL, (0, 0));
+                    self.sweep = self.sweep.wrapping_add(0x0c);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn midboss_entrance_then_defeat() {
+        let mut m = Midboss::new(192 * 16);
+        let mut pool = BulletPool::new();
+        // Entrance: invulnerable.
+        m.damage(100);
+        assert_eq!(m.hp, MIDBOSS1_HP);
+        for _ in 0..200 {
+            m.update(&mut pool);
+        }
+        assert_eq!(m.phase, 1, "should reach the attack phase");
+        assert!(pool.active_count() > 0, "should fire its sweep");
+        m.hp = 1;
+        m.damage(10);
+        assert!(m.defeated);
+    }
 
     #[test]
     fn phases_then_defeat() {
