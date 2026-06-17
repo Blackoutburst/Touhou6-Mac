@@ -9,7 +9,8 @@
 //! via render_to_image.
 
 use th04_formats::bft::Bft;
-use th04_formats::cdg::Cdg;
+use th04_formats::map::{self, Map};
+use th04_formats::mpn::Mpn;
 use th04_formats::par::Archive;
 use th04_formats::pi::Pi;
 use th04_formats::player::Input;
@@ -57,6 +58,7 @@ fn stage(a: &[String]) {
     let out = a.get(3).cloned().unwrap_or_else(|| "stage.png".into());
 
     let std = Std::parse(&arc.get(std_name).unwrap()).expect("parse STD");
+    let section_order = std.map_section_order.clone();
     let mut sim = StageSim::new(std, 0);
     // Run the sim up to the requested frame, holding shoot + weaving.
     for f in 0..until {
@@ -69,32 +71,35 @@ fn stage(a: &[String]) {
 
     let engine = Engine::new();
 
-    // Texture set: index 0 = 1x1 white (markers/backdrop), 1 = background,
-    // 2 = player; the rest are sprite cels indexed by `cel_idx` (patnum → slot).
+    // Texture 0 = 1×1 white (markers/backdrop), 1 = player; then background
+    // tiles, then sprite cels (indexed via `cel_idx`).
     let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
 
-    // Background CDG (placeholder palette until the real stage palette is RE'd).
-    let mut palette = [[0u8; 3]; 16];
-    for (i, c) in palette.iter_mut().enumerate() {
-        *c = [(i as u8) * 6, (i as u8) * 6, (i as u8) * 16];
-    }
-    let bg = arc.get(&std_name.replace(".STD", "BK.CDG")).and_then(|b| Cdg::parse(&b));
-    let bg_wh = bg.as_ref().map(|c| (c.width as f32, c.height as f32));
-    let bg_tex = match &bg {
-        Some(c) => engine.create_texture(&c.decode_rgba(0, &palette).unwrap(), c.width as u32, c.height as u32),
-        None => engine.create_texture(&[8, 8, 26, 255], 1, 1),
-    };
-
-    // Player sprite (Marisa, cel 0).
     let mari = arc.get("MARI.BFT").and_then(|b| Bft::parse(&b));
     let (player_tex, player_wh) = match &mari {
         Some(b) => (engine.create_texture(&b.decode_rgba(0, Some(0)).unwrap(), b.width as u32, b.height as u32), (b.width as f32, b.height as f32)),
         None => (engine.create_texture(&[102, 179, 255, 255], 1, 1), (16.0, 20.0)),
     };
+    let mut textures: Vec<th06_engine::Texture> = vec![white, player_tex];
+    const PLAYER: usize = 1;
 
-    let mut textures: Vec<th06_engine::Texture> = vec![white, bg_tex, player_tex];
-    // Load the sprite sheets into the global cel table at their PAT_* bases
-    // (main_pat.h): shared sheets, then the stage sheet at PAT_STAGE = 128.
+    // Background tileset (MPN — the real stage palette) + layout (MAP).
+    let mpn = arc.get(&std_name.replace(".STD", ".MPN")).and_then(|b| Mpn::parse(&b));
+    let map = arc.get(&std_name.replace(".STD", ".MAP")).and_then(|b| Map::parse(&b));
+    let tile_base = textures.len();
+    let ntiles = match &mpn {
+        Some(m) => {
+            for i in 0..m.count {
+                let rgba = m.decode_tile(i, None).unwrap();
+                textures.push(engine.create_texture(&rgba, 16, 16));
+            }
+            m.count
+        }
+        None => 0,
+    };
+
+    // Sprite cels at their PAT_* bases (main_pat.h): shared sheets, then the
+    // stage sheet at PAT_STAGE = 128.
     let mut cel_idx: std::collections::HashMap<u16, (usize, f32, f32)> = std::collections::HashMap::new();
     let sheets = [
         ("MIKOD.BFT".to_string(), 3u16),
@@ -130,14 +135,38 @@ fn stage(a: &[String]) {
         rot: 0.0,
     };
 
-    // Dark playfield backdrop, then the background scrolled + tiled down.
+    // Dark playfield backdrop.
     cmds.push(DrawCmd { tex: 0, dst: [PF_LEFT, PF_TOP, PF_W, PF_H], src: [0.0, 0.0, 1.0, 1.0], tint: [0.04, 0.04, 0.10, 1.0], rot: 0.0 });
-    if let Some((bw, bh)) = bg_wh {
-        let scroll = (until as f32 % bh) - bh; // background scrolls downward over time
-        let mut y = scroll;
-        while y < PF_H {
-            cmds.push(DrawCmd { tex: 1, dst: [PF_LEFT, PF_TOP + y, bw, bh], src: [0.0, 0.0, 1.0, 1.0], tint: [1.0; 4], rot: 0.0 });
-            y += bh;
+    // Scrolling tile background: walk map_section_order, 5 rows per section.
+    if let (Some(_), Some(mp)) = (&mpn, &map) {
+        let total_rows = (section_order.len() * map::ROWS_PER_SECTION) as i32;
+        let scroll_px = until as i32; // ~1px/frame
+        let top_row = scroll_px / 16;
+        let frac = (scroll_px % 16) as f32;
+        let rows_on_screen = (PF_H as i32 / 16) + 1;
+        for sr in 0..=rows_on_screen {
+            let bg_row = top_row + sr;
+            if bg_row < 0 || bg_row >= total_rows {
+                continue;
+            }
+            let sec = section_order[bg_row as usize / map::ROWS_PER_SECTION] as usize;
+            let rs = bg_row as usize % map::ROWS_PER_SECTION;
+            if sec >= mp.sections.len() {
+                continue;
+            }
+            let sy = PF_TOP + (sr * 16) as f32 - frac;
+            for col in 0..map::TILES_X {
+                let ti = Map::tile_index(mp.sections[sec][rs][col]);
+                if ti < ntiles {
+                    cmds.push(DrawCmd {
+                        tex: tile_base + ti,
+                        dst: [PF_LEFT + (col * 16) as f32, sy, 16.0, 16.0],
+                        src: [0.0, 0.0, 1.0, 1.0],
+                        tint: [1.0; 4],
+                        rot: 0.0,
+                    });
+                }
+            }
         }
     }
     // Enemies as real BFNT sprites, animated (patnum_base + anim cel → global cel).
@@ -162,7 +191,7 @@ fn stage(a: &[String]) {
     // Player sprite.
     let (ppx, ppy) = (sim.player.x as f32 / 16.0, sim.player.y as f32 / 16.0);
     if mari.is_some() {
-        cmds.push(sprite(2, ppx, ppy, player_wh.0, player_wh.1));
+        cmds.push(sprite(PLAYER, ppx, ppy, player_wh.0, player_wh.1));
     } else {
         cmds.push(solid(ppx, ppy, 16.0, 20.0, [0.4, 0.7, 1.0, 1.0]));
     }
