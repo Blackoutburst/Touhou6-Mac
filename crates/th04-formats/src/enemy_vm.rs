@@ -34,6 +34,8 @@ pub struct Enemy {
     pub angle_delta: u8,
     /// Frames since spawn (drives sprite animation).
     pub age: u32,
+    /// Item dropped on death (from the timeline spawn; 0xFF = none).
+    pub item: u8,
     /// Index into [`crate::stage::Std::enemy_scripts`] (set by the spawner).
     pub script_index: usize,
     pub script_ip: usize,
@@ -71,6 +73,7 @@ impl Enemy {
             speed: 0,
             angle_delta: 0,
             age: 0,
+            item: 0xFF,
             script_index: 0,
             script_ip: 0,
             cur_instr_frame: 0,

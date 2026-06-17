@@ -28,6 +28,16 @@ const SCROLL_DY: i32 = 16; // 1px/frame placeholder
 const ENEMY_HIT: i32 = 16 * SUBPIXEL;
 const BULLET_KILL: i32 = 6 * SUBPIXEL;
 
+/// A dropped item (power / point / …) falling for the player to collect.
+#[derive(Debug, Clone, Copy)]
+pub struct Item {
+    pub x: i32,
+    pub y: i32,
+    pub vy: i32,
+    pub kind: u8,
+    pub active: bool,
+}
+
 /// High-level stage progression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -54,6 +64,7 @@ pub struct StageSim {
     pub phase: Phase,
     pub boss: Option<Boss>,
     pub midboss: Option<Midboss>,
+    pub items: Vec<Item>,
     midboss_done: bool,
 }
 
@@ -75,6 +86,7 @@ impl StageSim {
             phase: Phase::Trash,
             boss: None,
             midboss: None,
+            items: Vec::new(),
             midboss_done: false,
         }
     }
@@ -127,6 +139,7 @@ impl StageSim {
                     for sp in &self.events[self.ev_i].spawns {
                         let mut e = Enemy::spawn(sp.x as i32, sp.y as i32);
                         e.script_index = sp.script_index as usize;
+                        e.item = sp.arg;
                         self.enemies.push(e);
                         self.enemies_spawned += 1;
                     }
@@ -181,6 +194,10 @@ impl StageSim {
                         e.killed = true;
                         self.enemies_killed += 1;
                         self.score += e.score as i64;
+                        // Drop an item (kind from the spawn; default to a point
+                        // item). The exact per-enemy drop table is a refinement.
+                        let kind = if e.item == 0xFF { 1 } else { e.item };
+                        self.items.push(Item { x: e.x, y: e.y, vy: -8, kind, active: true });
                     }
                     break;
                 }
@@ -251,6 +268,22 @@ impl StageSim {
                     }
                 }
             }
+        }
+
+        // 5b. Items fall (initial upward pop, then gravity) and auto-collect.
+        {
+            let (px, py) = (self.player.x, self.player.y);
+            for it in self.items.iter_mut() {
+                it.vy = (it.vy + 1).min(40);
+                it.y += it.vy;
+                if (it.x - px).abs() < 24 * SUBPIXEL && (it.y - py).abs() < 24 * SUBPIXEL {
+                    it.active = false;
+                    self.score += 100;
+                } else if it.y > 420 * SUBPIXEL {
+                    it.active = false;
+                }
+            }
+            self.items.retain(|i| i.active);
         }
 
         // 6. Drop dead enemies, advance time.

@@ -197,6 +197,16 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             cmds.push(solid(s.x as f32 / 16.0, s.y as f32 / 16.0, 4.0, 10.0, [0.5, 1.0, 1.0, 1.0]));
         }
     }
+    // Dropped items (placeholder colours by kind until the item sprites are mapped).
+    for it in &sim.items {
+        let c = match it.kind {
+            0 => [1.0, 0.25, 0.25, 1.0], // power (red)
+            1 => [0.3, 0.55, 1.0, 1.0],  // point (blue)
+            _ => [0.95, 0.9, 0.35, 1.0], // other (yellow)
+        };
+        cmds.push(solid(it.x as f32 / 16.0, it.y as f32 / 16.0, 10.0, 10.0, c));
+    }
+
     let (ppx, ppy) = (sim.player.x as f32 / 16.0, sim.player.y as f32 / 16.0);
     // Blink while invulnerable.
     let show = sim.player.invuln == 0 || (sim.frame / 4) % 2 == 0;
@@ -207,6 +217,15 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             cmds.push(solid(ppx, ppy, 16.0, 20.0, [0.4, 0.7, 1.0, 1.0]));
         }
     }
+
+    // Letterbox: hide anything drawn outside the playfield (the scrolling tiles
+    // overshoot its edges; the original masks them under the HUD/border).
+    let black = [0.0, 0.0, 0.0, 1.0];
+    let mask = |x: f32, y: f32, w: f32, h: f32| DrawCmd { tex: 0, dst: [x, y, w, h], src: [0.0, 0.0, 1.0, 1.0], tint: black, rot: 0.0 };
+    cmds.push(mask(0.0, 0.0, 640.0, PF_TOP));
+    cmds.push(mask(0.0, PF_TOP + PF_H, 640.0, 480.0 - (PF_TOP + PF_H)));
+    cmds.push(mask(0.0, PF_TOP, PF_LEFT, PF_H));
+    cmds.push(mask(PF_LEFT + PF_W, PF_TOP, 640.0 - (PF_LEFT + PF_W), PF_H));
     cmds
 }
 
