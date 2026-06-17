@@ -8,10 +8,17 @@
 //! straight-up pair so the player is controllable in the simulation. Positions
 //! are subpixels (16/px).
 
+use crate::math::vector2;
+
 const SUBPIXEL: i32 = 16;
 // TODO: confirm exact TH04 playfield.
 pub const PLAYFIELD_W: i32 = 384;
 pub const PLAYFIELD_H: i32 = 368;
+/// "Up" in the 256-direction system (0 = +x, 64 = +y/down, 192 = up).
+const ANGLE_UP: u8 = 192;
+const SHOT_DAMAGE: i32 = 10; // RE: th04 player shots deal 10
+/// Bomb: invulnerable + clears bullets + damages everything for this long.
+pub const BOMB_FRAMES: u32 = 180;
 
 // ReC98 th04/main/player/move.hpp: TO_SP(4) / TO_SP(3).
 const SPEED_ALIGNED: i32 = 4 * SUBPIXEL;
@@ -36,6 +43,7 @@ pub struct Input {
     pub down: bool,
     pub shoot: bool,
     pub focus: bool,
+    pub bomb: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +67,8 @@ pub struct Player {
     /// Frames of post-respawn invulnerability remaining (no hits while > 0).
     pub invuln: u32,
     pub gameover: bool,
+    /// Frames of bomb remaining (clears bullets + damages while > 0).
+    pub bombing: u32,
     shot_timer: u8,
     pub shots: Vec<PlayerShot>,
 }
@@ -79,18 +89,24 @@ impl Player {
             focused: false,
             invuln: RESPAWN_INVULN,
             gameover: false,
+            bombing: 0,
             shot_timer: 0,
             shots: Vec::new(),
         }
+    }
+
+    /// True while a bomb is active.
+    pub fn bombing(&self) -> bool {
+        self.bombing > 0
     }
 
     fn start_pos() -> (i32, i32) {
         ((PLAYFIELD_W / 2) * SUBPIXEL, (PLAYFIELD_H - 48) * SUBPIXEL)
     }
 
-    /// True while the player can't be hit.
+    /// True while the player can't be hit (post-respawn or bombing).
     pub fn invincible(&self) -> bool {
-        self.invuln > 0
+        self.invuln > 0 || self.bombing > 0
     }
 
     /// Take a hit: lose a life and respawn, or set game over at < 0 lives.
@@ -123,10 +139,25 @@ impl Player {
         }
     }
 
-    /// A basic forward shot. TODO: real per-character / per-power tables.
+    /// Per-character forward shot, widening/multiplying with power. Reimu
+    /// (types 0/1) fires a spreading fan; Marisa (2/3) fires tightly-packed
+    /// concentrated columns. Damage 10 (RE). The exact per-level tables (and
+    /// Marisa A's lasers / options) are simplified pending full RE.
     fn fire(&mut self) {
-        self.add_shot(self.x - 6 * SUBPIXEL, self.y, 0, -SHOT_SPEED, 1);
-        self.add_shot(self.x + 6 * SUBPIXEL, self.y, 0, -SHOT_SPEED, 1);
+        let level = (self.power as i32 / 16).min(7);
+        let n = 2 + level;
+        let reimu = self.shot_type < 2;
+        for i in 0..n {
+            let off = 2 * i - (n - 1); // symmetric about 0
+            if reimu {
+                let angle = ANGLE_UP.wrapping_add((off * 3) as u8); // fan, 3 units apart
+                let (vx, vy) = vector2(angle, SHOT_SPEED);
+                self.add_shot(self.x, self.y, vx, vy, SHOT_DAMAGE);
+            } else {
+                let col = off * 5 * SUBPIXEL / 2; // packed parallel columns
+                self.add_shot(self.x + col, self.y, 0, -SHOT_SPEED, SHOT_DAMAGE);
+            }
+        }
     }
 
     /// Advance one frame: move + clamp, fire on cadence, update shots.
@@ -136,6 +167,14 @@ impl Player {
         }
         if self.gameover {
             return;
+        }
+        // Bomb: spend one and become invulnerable; the sim clears bullets +
+        // damages everything while `bombing`.
+        if self.bombing > 0 {
+            self.bombing -= 1;
+        } else if input.bomb && self.bombs > 0 {
+            self.bombs -= 1;
+            self.bombing = BOMB_FRAMES;
         }
         self.focused = input.focus;
 
@@ -192,6 +231,29 @@ mod tests {
         p.update(&input);
         assert_eq!(p.active_shots(), 2);
         assert!(p.shots.iter().all(|s| s.vy < 0)); // travelling up
+    }
+
+    #[test]
+    fn bomb_consumes_and_protects() {
+        let mut p = Player::new(0);
+        let bombs = p.bombs;
+        let mut input = Input::default();
+        input.bomb = true;
+        p.update(&input);
+        assert_eq!(p.bombs, bombs - 1);
+        assert!(p.bombing());
+        assert!(p.invincible());
+    }
+
+    #[test]
+    fn marisa_fires_concentrated_columns() {
+        let mut p = Player::new(2); // Marisa
+        let mut input = Input::default();
+        input.shoot = true;
+        p.update(&input);
+        // all shots travel straight up (no x velocity)
+        assert!(p.active_shots() >= 2);
+        assert!(p.shots.iter().filter(|s| s.active).all(|s| s.vx == 0 && s.vy < 0));
     }
 
     #[test]

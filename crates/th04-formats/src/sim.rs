@@ -92,6 +92,30 @@ impl StageSim {
     pub fn step(&mut self, input: &Input) {
         self.player.update(input);
 
+        // Bomb: while active, keep the screen clear of enemy bullets and chip
+        // away at everything on the field.
+        if self.player.bombing() {
+            for b in self.bullets.bullets.iter_mut() {
+                b.active = false;
+            }
+            for e in self.enemies.iter_mut() {
+                if e.can_be_damaged {
+                    e.hp -= 4;
+                    if e.hp <= 0 && !e.killed {
+                        e.killed = true;
+                        self.enemies_killed += 1;
+                        self.score += e.score as i64;
+                    }
+                }
+            }
+            if let Some(b) = self.boss.as_mut() {
+                b.damage(2);
+            }
+            if let Some(m) = self.midboss.as_mut() {
+                m.damage(2);
+            }
+        }
+
         // 1. Trash timeline (the midboss interrupts it mid-stage).
         if self.phase == Phase::Trash {
             if !self.midboss_done && self.midboss.is_none() && self.frame >= MIDBOSS_FRAME {
