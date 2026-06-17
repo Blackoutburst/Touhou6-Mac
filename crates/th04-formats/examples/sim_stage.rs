@@ -45,7 +45,8 @@ fn main() {
         }
     }
     println!(
-        "\nfinal: spawned={} killed={} score={} player_hits={} finished={}",
-        sim.enemies_spawned, sim.enemies_killed, sim.score, sim.player_hits, sim.finished()
+        "\nfinal: spawned={} killed={} score={} player_hits={} lives={} gameover={} finished={}",
+        sim.enemies_spawned, sim.enemies_killed, sim.score, sim.player_hits,
+        sim.player.lives, sim.player.gameover, sim.finished()
     );
 }

@@ -56,9 +56,15 @@ pub struct Player {
     pub power: u8,
     pub shot_type: u8, // 0=ReimuA 1=ReimuB 2=MarisaA 3=MarisaB
     pub focused: bool,
+    /// Frames of post-respawn invulnerability remaining (no hits while > 0).
+    pub invuln: u32,
+    pub gameover: bool,
     shot_timer: u8,
     pub shots: Vec<PlayerShot>,
 }
+
+/// Invulnerability granted on (re)spawn.
+pub const RESPAWN_INVULN: u32 = 120;
 
 impl Player {
     /// Start at the bottom centre of the playfield with the chosen shot type.
@@ -71,9 +77,38 @@ impl Player {
             power: 0,
             shot_type,
             focused: false,
+            invuln: RESPAWN_INVULN,
+            gameover: false,
             shot_timer: 0,
             shots: Vec::new(),
         }
+    }
+
+    fn start_pos() -> (i32, i32) {
+        ((PLAYFIELD_W / 2) * SUBPIXEL, (PLAYFIELD_H - 48) * SUBPIXEL)
+    }
+
+    /// True while the player can't be hit.
+    pub fn invincible(&self) -> bool {
+        self.invuln > 0
+    }
+
+    /// Take a hit: lose a life and respawn, or set game over at < 0 lives.
+    /// Returns true if the player died (caller may clear bullets, etc.).
+    pub fn hit(&mut self) -> bool {
+        if self.invincible() || self.gameover {
+            return false;
+        }
+        self.lives -= 1;
+        if self.lives < 0 {
+            self.gameover = true;
+        } else {
+            let (x, y) = Self::start_pos();
+            self.x = x;
+            self.y = y;
+            self.invuln = RESPAWN_INVULN;
+        }
+        true
     }
 
     pub fn active_shots(&self) -> usize {
@@ -96,6 +131,12 @@ impl Player {
 
     /// Advance one frame: move + clamp, fire on cadence, update shots.
     pub fn update(&mut self, input: &Input) {
+        if self.invuln > 0 {
+            self.invuln -= 1;
+        }
+        if self.gameover {
+            return;
+        }
         self.focused = input.focus;
 
         let dx = input.right as i32 - input.left as i32;

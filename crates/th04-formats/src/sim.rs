@@ -115,13 +115,33 @@ impl StageSim {
             }
         }
 
-        // 5. Enemy bullets vs player.
-        let (px, py) = (self.player.x, self.player.y);
-        for b in self.bullets.bullets.iter_mut() {
-            if b.active && (b.x - px).abs() < BULLET_KILL && (b.y - py).abs() < BULLET_KILL {
-                b.active = false;
+        // 5. Enemy bullets / bodies vs player (only when vulnerable).
+        if !self.player.invincible() && !self.player.gameover {
+            let (px, py) = (self.player.x, self.player.y);
+            let mut died = false;
+            for b in self.bullets.bullets.iter_mut() {
+                if b.active && (b.x - px).abs() < BULLET_KILL && (b.y - py).abs() < BULLET_KILL {
+                    b.active = false;
+                    died = true;
+                    break;
+                }
+            }
+            if !died {
+                for e in &self.enemies {
+                    if !e.killed && e.kills_player && (e.x - px).abs() < ENEMY_HIT && (e.y - py).abs() < ENEMY_HIT {
+                        died = true;
+                        break;
+                    }
+                }
+            }
+            if died {
                 self.player_hits += 1;
-                self.player.lives -= 1;
+                if self.player.hit() {
+                    // TH04 clears the screen of bullets when the player dies.
+                    for b in self.bullets.bullets.iter_mut() {
+                        b.active = false;
+                    }
+                }
             }
         }
 
