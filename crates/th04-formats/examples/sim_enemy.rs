@@ -19,8 +19,10 @@ fn main() {
     let frames: u32 = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(360);
     let script = &std.enemy_scripts[idx];
 
-    // Spawn at horizontal centre, just above the playfield (subpixels).
-    let mut e = Enemy::spawn(192 * 16, -16 * 16);
+    // Spawn position in px (defaults: centre, just above the playfield).
+    let sx: i32 = a.get(4).and_then(|s| s.parse().ok()).unwrap_or(192);
+    let sy: i32 = a.get(5).and_then(|s| s.parse().ok()).unwrap_or(-16);
+    let mut e = Enemy::spawn(sx * 16, sy * 16);
     let mut pool = BulletPool::new();
     let player = (192 * 16, 400 * 16);
     println!(

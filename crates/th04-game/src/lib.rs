@@ -21,13 +21,15 @@ const PF_LEFT: f32 = 128.0;
 const PF_TOP: f32 = 40.0;
 const PF_W: f32 = 384.0;
 const PF_H: f32 = 368.0;
-const PLAYER: usize = 1;
 
 /// Texture indices + metadata the per-frame draw needs (the textures
 /// themselves are owned by the engine once the game loop starts).
 pub struct DrawData {
     player_wh: (f32, f32),
     has_player_sprite: bool,
+    /// Texture index of the player's first cel; banking cels follow it.
+    player_base: usize,
+    player_cels: usize,
     /// Background tiles are packed into one atlas texture so the whole
     /// background draws in a single batch (per-tile textures = hundreds of
     /// draw calls, which made WebGL drop tiles / flicker).
@@ -44,16 +46,24 @@ pub struct DrawData {
 /// Build all textures + draw metadata + the stage sim from an archive.
 pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (Vec<Texture>, DrawData, StageSim) {
     let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
+    let mut textures: Vec<Texture> = vec![white];
 
+    // Player cels: 0 = neutral, 1 = lean left, 2 = lean right.
+    let player_base = textures.len();
     let mari = arc.get("MARI.BFT").and_then(|b| Bft::parse(&b));
-    let (player_tex, player_wh) = match &mari {
-        Some(b) => (
-            engine.create_texture(&b.decode_rgba(0, Some(0)).unwrap(), b.width as u32, b.height as u32),
-            (b.width as f32, b.height as f32),
-        ),
-        None => (engine.create_texture(&[102, 179, 255, 255], 1, 1), (16.0, 20.0)),
+    let (player_wh, player_cels) = match &mari {
+        Some(b) => {
+            let cels = b.count.min(3);
+            for n in 0..cels {
+                textures.push(engine.create_texture(&b.decode_rgba(n, Some(0)).unwrap(), b.width as u32, b.height as u32));
+            }
+            ((b.width as f32, b.height as f32), cels)
+        }
+        None => {
+            textures.push(engine.create_texture(&[102, 179, 255, 255], 1, 1));
+            ((16.0, 20.0), 1)
+        }
     };
-    let mut textures: Vec<Texture> = vec![white, player_tex];
 
     // Background tileset (MPN) + layout (MAP), packed into one atlas texture.
     let mpn = arc.get(&std_name.replace(".STD", ".MPN")).and_then(|b| Mpn::parse(&b));
@@ -106,6 +116,8 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
     let dd = DrawData {
         player_wh,
         has_player_sprite: mari.is_some(),
+        player_base,
+        player_cels,
         tile_atlas,
         tile_cols,
         atlas_w,
@@ -212,7 +224,14 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     let show = sim.player.invuln == 0 || (sim.frame / 4) % 2 == 0;
     if show {
         if dd.has_player_sprite {
-            cmds.push(sprite(PLAYER, ppx, ppy, dd.player_wh.0, dd.player_wh.1));
+            // Banking cel from the player's lean (clamped to what's available).
+            let cel = match sim.player.facing.signum() {
+                -1 => 1,
+                1 => 2,
+                _ => 0,
+            }
+            .min(dd.player_cels.saturating_sub(1));
+            cmds.push(sprite(dd.player_base + cel, ppx, ppy, dd.player_wh.0, dd.player_wh.1));
         } else {
             cmds.push(solid(ppx, ppy, 16.0, 20.0, [0.4, 0.7, 1.0, 1.0]));
         }

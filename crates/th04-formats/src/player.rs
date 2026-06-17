@@ -64,6 +64,8 @@ pub struct Player {
     pub power: u8,
     pub shot_type: u8, // 0=ReimuA 1=ReimuB 2=MarisaA 3=MarisaB
     pub focused: bool,
+    /// Horizontal lean for the banking sprite: -1 left, 0 neutral, +1 right.
+    pub facing: i8,
     /// Frames of post-respawn invulnerability remaining (no hits while > 0).
     pub invuln: u32,
     pub gameover: bool,
@@ -87,6 +89,7 @@ impl Player {
             power: 0,
             shot_type,
             focused: false,
+            facing: 0,
             invuln: RESPAWN_INVULN,
             gameover: false,
             bombing: 0,
@@ -180,6 +183,7 @@ impl Player {
 
         let dx = input.right as i32 - input.left as i32;
         let dy = input.down as i32 - input.up as i32;
+        self.facing = dx as i8;
         let (vx, vy) = if dx != 0 && dy != 0 {
             (dx * SPEED_DIAGONAL, dy * SPEED_DIAGONAL)
         } else {

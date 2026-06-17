@@ -21,6 +21,12 @@ const BOSS_PHASES: u8 = 4;
 // until the per-stage value is located).
 const MIDBOSS_HIT: i32 = 24 * SUBPIXEL;
 const MIDBOSS_FRAME: u16 = 2400;
+const PLAYFIELD_W: i32 = 384;
+const PLAYFIELD_H: i32 = 368;
+/// ReC98 ENEMY_POS_RANDOM (999.0 px): a spawn coordinate of this value means
+/// "pick a random position on that axis" (randring2_next16_mod). Stored as a
+/// subpixel here.
+const ENEMY_POS_RANDOM: i32 = 999 * SUBPIXEL;
 
 const SUBPIXEL: i32 = 16;
 const SCROLL_DY: i32 = 16; // 1px/frame placeholder
@@ -66,6 +72,7 @@ pub struct StageSim {
     pub midboss: Option<Midboss>,
     pub items: Vec<Item>,
     midboss_done: bool,
+    rng: u32,
 }
 
 impl StageSim {
@@ -88,6 +95,18 @@ impl StageSim {
             midboss: None,
             items: Vec::new(),
             midboss_done: false,
+            rng: 0x9e37_79b9,
+        }
+    }
+
+    /// Resolve a spawn coordinate, replacing ENEMY_POS_RANDOM with a random
+    /// position within `bound` subpixels.
+    fn resolve_pos(&mut self, v: i32, bound: i32) -> i32 {
+        if v == ENEMY_POS_RANDOM {
+            self.rng = self.rng.wrapping_mul(1103515245).wrapping_add(12345);
+            ((self.rng >> 16) as i32).rem_euclid(bound)
+        } else {
+            v
         }
     }
 
@@ -136,8 +155,12 @@ impl StageSim {
             // Timeline pauses while the midboss is on screen.
             if self.midboss.is_none() {
                 while self.ev_i < self.events.len() && self.events[self.ev_i].frame <= self.frame {
-                    for sp in &self.events[self.ev_i].spawns {
-                        let mut e = Enemy::spawn(sp.x as i32, sp.y as i32);
+                    // Collect this frame's spawns first (resolve_pos needs &mut self).
+                    let spawns = self.events[self.ev_i].spawns.clone();
+                    for sp in &spawns {
+                        let ex = self.resolve_pos(sp.x as i32, PLAYFIELD_W * SUBPIXEL);
+                        let ey = self.resolve_pos(sp.y as i32, PLAYFIELD_H * SUBPIXEL);
+                        let mut e = Enemy::spawn(ex, ey);
                         e.script_index = sp.script_index as usize;
                         e.item = sp.arg;
                         self.enemies.push(e);
