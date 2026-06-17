@@ -110,14 +110,18 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     let mut cmds = Vec::new();
     // Playfield backdrop.
     cmds.push(DrawCmd { tex: 0, dst: [PF_LEFT, PF_TOP, PF_W, PF_H], src: [0.0, 0.0, 1.0, 1.0], tint: [0.04, 0.04, 0.10, 1.0], rot: 0.0 });
-    // Scrolling tile background.
+    // Scrolling tile background. The world scrolls *downward* (the player flies
+    // forward; scenery flows toward them at the bottom). map_section_order[0]
+    // is the start, shown at the bottom; later sections enter from the top.
     if let Some(mp) = &dd.map {
         let total_rows = (dd.section_order.len() * map::ROWS_PER_SECTION) as i32;
-        let scroll_px = sim.frame as i32;
-        let top_row = scroll_px / 16;
-        let frac = (scroll_px % 16) as f32;
-        for sr in 0..=(PF_H as i32 / 16 + 1) {
-            let bg_row = top_row + sr;
+        let screen_rows = PF_H as i32 / 16; // 23 visible tile rows
+        let bottom_row = sim.frame as i32 / 16; // progress, increases over time
+        let frac = (sim.frame % 16) as f32; // sub-tile downward offset
+        for sr in -1..=(screen_rows + 1) {
+            // Screen row 0 = top = newest; bottom = oldest. Higher rows scroll
+            // in from the top as `bottom_row` grows, so content moves down.
+            let bg_row = bottom_row + (screen_rows - sr);
             if bg_row < 0 || bg_row >= total_rows {
                 continue;
             }
@@ -126,7 +130,7 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             if sec >= mp.sections.len() {
                 continue;
             }
-            let sy = PF_TOP + (sr * 16) as f32 - frac;
+            let sy = PF_TOP + (sr * 16) as f32 + frac;
             for col in 0..map::TILES_X {
                 let ti = Map::tile_index(mp.sections[sec][rs][col]);
                 if ti < dd.ntiles {
