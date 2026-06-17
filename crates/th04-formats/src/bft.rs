@@ -51,10 +51,12 @@ impl Bft {
         if width == 0 || width % 2 != 0 || height == 0 || end < start {
             return None;
         }
+        // The palette is stored B, R, G per entry; master.lib's
+        // bfnt_palette_set swaps it to R, G, B. Do the same here.
         let mut palette = [[0u8; 3]; PALETTE_LEN];
         for (i, c) in palette.iter_mut().enumerate() {
             let b = HEADER_LEN + i * 3;
-            *c = [bytes[b], bytes[b + 1], bytes[b + 2]];
+            *c = [bytes[b + 1], bytes[b + 2], bytes[b]];
         }
         let pat_start = HEADER_LEN + PALETTE_LEN_BYTES;
         Some(Bft {
