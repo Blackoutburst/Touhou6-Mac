@@ -18,6 +18,18 @@ wasm-pack build crates/game --release --target web --out-dir ../../web/pkg
 This produces `web/pkg/th06.js` + `web/pkg/th06_bg.wasm`, which
 `web/index.html` imports.
 
+### Touhou 4 (Lotus Land Story)
+
+```sh
+wasm-pack build crates/th04-game --release --target web --out-dir ../../web/pkg-th04
+```
+
+Produces `web/pkg-th04/th04_game.js` + `th04_game_bg.wasm`, imported by
+`web/th04.html`. The player uploads `東方幻想.郷` (extracted from their
+`th04*.hdi` via `tools/pc98_hdi_extract.py`); the page picks the largest PAR
+archive among the selected files. Controls: arrows / Z shoot / X bomb / Shift
+focus. (Stage 1; dialogue + music not yet wired.)
+
 ## Run locally
 
 The module must be served over HTTP (ES-module imports + wasm MIME), not

@@ -2604,9 +2604,14 @@ dependencies = [
 name = "th04-game"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
  "image",
+ "js-sys",
  "th04-formats",
  "th06-engine",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

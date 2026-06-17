@@ -1,6 +1,7 @@
 target/
 logs/
 web/pkg/
+web/pkg-th04/
 .DS_Store
 
 # Copyrighted game data — bring your own copy (never commit assets)

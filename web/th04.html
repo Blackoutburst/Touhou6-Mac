@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>東方幻想郷 — Lotus Land Story (web beta)</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0a120a; color: #e8f0e8;
+    font-family: system-ui, -apple-system, sans-serif; }
+  #shell { min-height: 100%; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 1.2rem; text-align: center; padding: 2rem; }
+  h1 { font-weight: 600; letter-spacing: 0.04em; margin: 0; }
+  .sub { color: #8aa08a; font-size: 0.9rem; max-width: 34rem; line-height: 1.5; }
+  .panel { background: #15201f; border: 1px solid #2a3a2a; border-radius: 12px;
+    padding: 1.5rem 1.8rem; display: flex; flex-direction: column; gap: 1rem;
+    align-items: center; min-width: 18rem; }
+  button { background: #2a8a3a; color: #fff; border: 0; border-radius: 8px;
+    padding: 0.6rem 1.4rem; font-size: 1rem; cursor: pointer; }
+  .err { color: #ff8b6b; font-size: 0.85rem; min-height: 1rem; }
+  .hidden { display: none !important; }
+  body.playing #shell { display: none; }
+  body.playing { display: flex; align-items: center; justify-content: center; margin: 0; height: 100vh; background: #000; }
+  #th04-canvas { display: block; background: #000; image-rendering: pixelated;
+    aspect-ratio: 4 / 3; width: min(100vw, 133.333vh) !important; height: auto !important; max-height: 100vh; }
+  #status { color: #9ab09a; font-size: 0.85rem; }
+  code { background: #0d160d; padding: 0.1rem 0.35rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="shell">
+  <h1>東方幻想郷 <span style="color:#2a8a3a">·</span> Lotus Land Story</h1>
+  <div class="sub">Native reimplementation — web private beta. Your game files
+    stay on your device: they are read in the browser and never uploaded.</div>
+  <div id="picker" class="panel">
+    <div>Select your TH04 data file(s)</div>
+    <div class="sub">Pick <code>東方幻想.郷</code> (extract it from your
+      <code>th04*.hdi</code> with <code>tools/pc98_hdi_extract.py</code>). You can
+      also select the whole extracted folder.</div>
+    <input id="files" type="file" multiple />
+    <div id="pickErr" class="err"></div>
+  </div>
+  <div class="sub">Controls: arrows move · Z shoot · X bomb · Shift focus</div>
+  <div id="status"></div>
+</div>
+
+<script type="module">
+import init, { start_game } from "./pkg-th04/th04_game.js";
+
+const status = document.getElementById("status");
+const pickErr = document.getElementById("pickErr");
+
+document.getElementById("files").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  if (files.length === 0) return;
+  pickErr.textContent = "";
+  status.textContent = "Reading files…";
+
+  // { basename: Uint8Array } for every selected file.
+  const map = {};
+  for (const f of files) {
+    map[f.name] = new Uint8Array(await f.arrayBuffer());
+  }
+
+  status.textContent = "Starting engine…";
+  document.getElementById("picker").classList.add("hidden");
+  try {
+    await init();
+    await start_game(map); // picks the largest PAR archive among the files
+    document.body.classList.add("playing");
+    status.textContent = "";
+  } catch (err) {
+    console.error(err);
+    status.textContent = "";
+    pickErr.textContent = "Failed to start: " + err;
+    document.getElementById("picker").classList.remove("hidden");
+  }
+});
+</script>
+</body>
+</html>

@@ -4,10 +4,24 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
-# The TH04 game: decodes TH04 assets via th04-formats and renders them through
-# the shared th06-engine (wgpu). Currently a thin harness that draws the title.
+[lib]
+# rlib for the native binary to link; cdylib for the wasm-bindgen web build.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 th04-formats = { path = "../th04-formats" }
 th06-engine = { path = "../engine" }
+
+# Native binary only: image I/O for screenshots.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 image = "0.25"
+
+# Web entry: JS glue + DOM file upload.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Document", "Window", "Element", "HtmlElement", "HtmlCanvasElement", "Node",
+] }
