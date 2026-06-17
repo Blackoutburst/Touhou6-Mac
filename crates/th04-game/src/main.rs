@@ -69,8 +69,8 @@ fn stage(a: &[String]) {
 
     let engine = Engine::new();
 
-    // Texture set (indices referenced by DrawCmd.tex):
-    //   0 = 1x1 white (markers/backdrop), 1 = background, 2 = player, 3.. = enemy cels.
+    // Texture set: index 0 = 1x1 white (markers/backdrop), 1 = background,
+    // 2 = player; the rest are sprite cels indexed by `cel_idx` (patnum → slot).
     let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
 
     // Background CDG (placeholder palette until the real stage palette is RE'd).
@@ -85,28 +85,34 @@ fn stage(a: &[String]) {
         None => engine.create_texture(&[8, 8, 26, 255], 1, 1),
     };
 
-    // Player sprite (Marisa, cel 0) and the stage's enemy sprite cels.
+    // Player sprite (Marisa, cel 0).
     let mari = arc.get("MARI.BFT").and_then(|b| Bft::parse(&b));
     let (player_tex, player_wh) = match &mari {
         Some(b) => (engine.create_texture(&b.decode_rgba(0, Some(0)).unwrap(), b.width as u32, b.height as u32), (b.width as f32, b.height as f32)),
         None => (engine.create_texture(&[102, 179, 255, 255], 1, 1), (16.0, 20.0)),
     };
-    let enemy_bft = arc.get(&std_name.replace(".STD", ".BFT")).and_then(|b| Bft::parse(&b));
-    let mut enemy_texs = Vec::new();
-    let (mut ew, mut eh) = (18.0f32, 18.0f32);
-    if let Some(b) = &enemy_bft {
-        ew = b.width as f32;
-        eh = b.height as f32;
-        for n in 0..b.count {
-            if let Some(rgba) = b.decode_rgba(n, Some(0)) {
-                enemy_texs.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
+
+    let mut textures: Vec<th06_engine::Texture> = vec![white, bg_tex, player_tex];
+    // Load the sprite sheets into the global cel table at their PAT_* bases
+    // (main_pat.h): shared sheets, then the stage sheet at PAT_STAGE = 128.
+    let mut cel_idx: std::collections::HashMap<u16, (usize, f32, f32)> = std::collections::HashMap::new();
+    let sheets = [
+        ("MIKOD.BFT".to_string(), 3u16),
+        ("MIKO32.BFT".to_string(), 4),
+        ("MIKO16.BFT".to_string(), 38),
+        (std_name.replace(".STD", ".BFT"), 128),
+    ];
+    for (name, base) in &sheets {
+        if let Some(b) = arc.get(name).and_then(|d| Bft::parse(&d)) {
+            for n in 0..b.count {
+                if let Some(rgba) = b.decode_rgba(n, Some(0)) {
+                    let idx = textures.len();
+                    textures.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
+                    cel_idx.insert(base + n as u16, (idx, b.width as f32, b.height as f32));
+                }
             }
         }
     }
-
-    let mut texes: Vec<&th06_engine::Texture> = vec![&white, &bg_tex, &player_tex];
-    texes.extend(enemy_texs.iter());
-    const ENEMY_BASE: usize = 3;
 
     let mut cmds: Vec<DrawCmd> = Vec::new();
     let solid = |x: f32, y: f32, w: f32, h: f32, tint: [f32; 4]| DrawCmd {
@@ -124,23 +130,22 @@ fn stage(a: &[String]) {
         rot: 0.0,
     };
 
-    // Dark playfield backdrop, then the background strip tiled down.
+    // Dark playfield backdrop, then the background scrolled + tiled down.
     cmds.push(DrawCmd { tex: 0, dst: [PF_LEFT, PF_TOP, PF_W, PF_H], src: [0.0, 0.0, 1.0, 1.0], tint: [0.04, 0.04, 0.10, 1.0], rot: 0.0 });
     if let Some((bw, bh)) = bg_wh {
-        let mut y = 0.0;
+        let scroll = (until as f32 % bh) - bh; // background scrolls downward over time
+        let mut y = scroll;
         while y < PF_H {
             cmds.push(DrawCmd { tex: 1, dst: [PF_LEFT, PF_TOP + y, bw, bh], src: [0.0, 0.0, 1.0, 1.0], tint: [1.0; 4], rot: 0.0 });
             y += bh;
         }
     }
-    // Enemies as real BFNT sprites (patnum → cel, approximate until the global
-    // sprite-sheet mapping is RE'd).
+    // Enemies as real BFNT sprites, animated (patnum_base + anim cel → global cel).
     for e in &sim.enemies {
         let (px, py) = (e.x as f32 / 16.0, e.y as f32 / 16.0);
-        if enemy_texs.is_empty() {
-            cmds.push(solid(px, py, ew, eh, [1.0, 0.3, 0.3, 1.0]));
-        } else {
-            cmds.push(sprite(ENEMY_BASE + (e.patnum_base as usize % enemy_texs.len()), px, py, ew, eh));
+        match cel_idx.get(&e.anim_patnum()) {
+            Some(&(idx, w, h)) => cmds.push(sprite(idx, px, py, w, h)),
+            None => cmds.push(solid(px, py, 18.0, 18.0, [1.0, 0.3, 0.3, 1.0])),
         }
     }
     // Bullets + player shots as markers (their sprite sheets aren't decoded yet).
@@ -162,6 +167,7 @@ fn stage(a: &[String]) {
         cmds.push(solid(ppx, ppy, 16.0, 20.0, [0.4, 0.7, 1.0, 1.0]));
     }
 
+    let texes: Vec<&th06_engine::Texture> = textures.iter().collect();
     let frame_img = engine.render_to_image(&cmds, &texes, None);
     image::save_buffer(&out, &frame_img, SCREEN_W, SCREEN_H, image::ColorType::Rgba8).expect("save png");
     println!(

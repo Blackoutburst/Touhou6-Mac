@@ -32,6 +32,8 @@ pub struct Enemy {
     pub angle: u8,
     pub speed: i16,
     pub angle_delta: u8,
+    /// Frames since spawn (drives sprite animation).
+    pub age: u32,
     /// Index into [`crate::stage::Std::enemy_scripts`] (set by the spawner).
     pub script_index: usize,
     pub script_ip: usize,
@@ -68,6 +70,7 @@ impl Enemy {
             angle: 0,
             speed: 0,
             angle_delta: 0,
+            age: 0,
             script_index: 0,
             script_ip: 0,
             cur_instr_frame: 0,
@@ -91,6 +94,17 @@ impl Enemy {
             fire_count: 0,
             rng: 0x1234_5678,
         }
+    }
+
+    /// Current animated sprite pattern number (`patnum_base` + animation cel),
+    /// the absolute cel index used by the sprite system (see `main_pat.h`).
+    pub fn anim_patnum(&self) -> u16 {
+        let cel = if self.anim_frames_per_cel > 0 && self.anim_cels > 0 {
+            (self.age / self.anim_frames_per_cel as u32) % self.anim_cels as u32
+        } else {
+            0
+        };
+        self.patnum_base as u16 + cel as u16
     }
 
     fn set_velocity(&mut self) {
@@ -130,6 +144,7 @@ impl Enemy {
         if self.killed {
             return;
         }
+        self.age = self.age.wrapping_add(1);
         // Autofire is handled by the enemy update loop, independently of the
         // script: fire the template every [autofire_interval] frames.
         if self.autofire {
