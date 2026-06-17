@@ -179,3 +179,46 @@ an FM-sound story, and a reference decomp that's only ~half done. Expect **notic
 more reverse-engineering** than TH06 required, concentrated in Phases 1, 3, 4. The
 flip side: enemy patterns being `.STD` bytecode (not hand-coded asm) means the
 gameplay core is more tractable than TH01/TH02 would be.
+
+## Remaining work / TODO (as of 2026-06-17)
+
+Stage 1 is playable end-to-end in the browser (native-Rust + WASM): real assets
+(PAR archive, PI, CDG/CD2, BFNT, MPN/MAP), the enemy-script VM, bullet patterns,
+player (per-character shots + bombs), lives/death/respawn, items, midboss (RE'd),
+a boss fight, stage clear, scrolling tile background, sprites, and a HUD.
+
+What's left, roughly in priority order:
+
+### Fidelity (make stage 1 exact)
+- **Stage bosses 1–5** — *not in ReC98* (only b6/extra are decompiled). They live
+  in `MAIN.EXE` overlays that ZUN packed with `zun.com`. Doing them faithfully
+  needs: unpack `MAIN.EXE` → locate + disassemble each boss overlay → port. Until
+  then `boss.rs` is a generic multi-phase stand-in. (Biggest single task.)
+- **Exact player shot tables** — Reimu/Marisa A/B × 10 power levels + Marisa A's
+  option lasers (the ~40 `shot_*` functions in `th04_main.asm`). Currently a
+  simplified fan/column model.
+- **Item drop table** — the real per-enemy drops (`th04/main/item/enemy_drops`)
+  and item kinds/values; currently every kill drops a point item.
+- **Exact hitboxes** + deathbomb window; **power items** raising shot level.
+- **Midboss activation frame** — `MIDBOSS_FRAME` is a placeholder; find the real
+  per-stage `frames_until`.
+- **Banking-cel order** — confirm MARI.BFT cel 1/2 = left/right (currently guessed).
+
+### Graphics polish
+- **Real HUD font** — wire `GAMEFT.BFT` (1bpp ASCII font) for score/labels instead
+  of the built-in 3×5 digits; draw the original side-panel art.
+- **Boss/midboss sprites** — `BSS*.CD2` / `KAO*.CD2` (currently coloured markers).
+- **Bullet/shot sprites** — pellet + `PAT_BULLET16_*` sheets (currently markers).
+- **Tile-atlas linear-filter seams** — switch the atlas to nearest filtering if
+  seams show when upscaled.
+
+### Content / systems
+- **Stages 2–6** — parse + run `ST01..ST06` (the formats already support them).
+- **Dialogue** — `.TXT` (scrambled Shift-JIS) + the dialog system.
+- **Music** — `.M26`/`.M86` PMD songs (YM2203/YM2608); needs an FM synth core or
+  pre-rendered audio, then wire into `th06-engine`'s audio.
+- **Title/menu, difficulty select, scoring/extends, replays.**
+
+### Build / infra
+- WASM bundle built locally to `web/pkg-th04/` (gitignored). `wasm-pack` is
+  installed. Native windowed play: `cargo run -p th04-game -- play <archive> ST00.STD`.
