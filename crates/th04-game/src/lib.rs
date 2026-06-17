@@ -130,6 +130,43 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
     (textures, dd, sim)
 }
 
+/// 3×5 bitmap digits (one byte per row, low 3 bits, MSB = left column).
+const DIGITS: [[u8; 5]; 10] = [
+    [0b111, 0b101, 0b101, 0b101, 0b111], // 0
+    [0b010, 0b110, 0b010, 0b010, 0b111], // 1
+    [0b111, 0b001, 0b111, 0b100, 0b111], // 2
+    [0b111, 0b001, 0b111, 0b001, 0b111], // 3
+    [0b101, 0b101, 0b111, 0b001, 0b001], // 4
+    [0b111, 0b100, 0b111, 0b001, 0b111], // 5
+    [0b111, 0b100, 0b111, 0b101, 0b111], // 6
+    [0b111, 0b001, 0b001, 0b001, 0b001], // 7
+    [0b111, 0b101, 0b111, 0b101, 0b111], // 8
+    [0b111, 0b101, 0b111, 0b001, 0b111], // 9
+];
+
+/// Absolute-position rectangle (screen space), tex 0 tinted.
+fn rect(x: f32, y: f32, w: f32, h: f32, tint: [f32; 4]) -> DrawCmd {
+    DrawCmd { tex: 0, dst: [x, y, w, h], src: [0.0, 0.0, 1.0, 1.0], tint, rot: 0.0 }
+}
+
+/// Draw `value` right-aligned ending at `x_right` using the built-in 3×5 font.
+fn push_number(cmds: &mut Vec<DrawCmd>, x_right: f32, y: f32, value: i64, px: f32, color: [f32; 4]) {
+    let s = value.max(0).to_string();
+    let advance = px * 4.0; // 3 cols + 1 gap
+    let mut x = x_right - s.len() as f32 * advance;
+    for ch in s.bytes() {
+        let g = &DIGITS[(ch - b'0') as usize];
+        for (row, bits) in g.iter().enumerate() {
+            for col in 0..3 {
+                if bits & (0b100 >> col) != 0 {
+                    cmds.push(rect(x + col as f32 * px, y + row as f32 * px, px, px, color));
+                }
+            }
+        }
+        x += advance;
+    }
+}
+
 fn solid(x: f32, y: f32, w: f32, h: f32, tint: [f32; 4]) -> DrawCmd {
     DrawCmd { tex: 0, dst: [PF_LEFT + x - w / 2.0, PF_TOP + y - h / 2.0, w, h], src: [0.0, 0.0, 1.0, 1.0], tint, rot: 0.0 }
 }
@@ -245,6 +282,37 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     cmds.push(mask(0.0, PF_TOP + PF_H, 640.0, 480.0 - (PF_TOP + PF_H)));
     cmds.push(mask(0.0, PF_TOP, PF_LEFT, PF_H));
     cmds.push(mask(PF_LEFT + PF_W, PF_TOP, 640.0 - (PF_LEFT + PF_W), PF_H));
+
+    // HUD in the right panel (graphical; the bitmap digits stand in for the
+    // original gaiji font). Panel inner-x ≈ 520..632.
+    let px = PF_LEFT + PF_W + 8.0; // 520
+    let white = [1.0, 1.0, 1.0, 1.0];
+    // Score (right-aligned).
+    push_number(&mut cmds, 632.0, 52.0, sim.score, 3.0, white);
+    // Lives (green) and bombs (blue) as icon rows.
+    for i in 0..sim.player.lives.max(0).min(8) {
+        cmds.push(rect(px + i as f32 * 12.0, 92.0, 9.0, 9.0, [0.4, 1.0, 0.5, 1.0]));
+    }
+    for i in 0..sim.player.bombs.max(0).min(8) {
+        cmds.push(rect(px + i as f32 * 12.0, 116.0, 9.0, 9.0, [0.5, 0.7, 1.0, 1.0]));
+    }
+    // Power bar (0..128).
+    let pw = 104.0;
+    cmds.push(rect(px, 148.0, pw, 8.0, [0.2, 0.2, 0.25, 1.0]));
+    let fill = pw * (sim.player.power as f32 / 128.0).min(1.0);
+    cmds.push(rect(px, 148.0, fill, 8.0, [1.0, 0.85, 0.3, 1.0]));
+
+    // Boss / midboss HP bar across the top of the playfield.
+    let hp = match (&sim.boss, &sim.midboss) {
+        (Some(b), _) if !b.defeated => Some((b.hp, b.max_hp)),
+        (_, Some(m)) if !m.defeated => Some((m.hp, 620)),
+        _ => None,
+    };
+    if let Some((cur, max)) = hp {
+        cmds.push(rect(PF_LEFT, PF_TOP + 2.0, PF_W, 5.0, [0.2, 0.05, 0.1, 1.0]));
+        let w = PF_W * (cur.max(0) as f32 / max as f32);
+        cmds.push(rect(PF_LEFT, PF_TOP + 2.0, w, 5.0, [1.0, 0.3, 0.4, 1.0]));
+    }
     cmds
 }
 
