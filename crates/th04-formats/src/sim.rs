@@ -18,6 +18,17 @@ const SCROLL_DY: i32 = 16; // 1px/frame placeholder
 const ENEMY_HIT: i32 = 16 * SUBPIXEL;
 const BULLET_KILL: i32 = 6 * SUBPIXEL;
 
+/// High-level stage progression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Trash-wave timeline is running (a midboss interlude lives inside this).
+    Trash,
+    /// Timeline exhausted + field clear → the boss would appear here (TODO).
+    Boss,
+    /// Stage finished (boss defeated / nothing left).
+    Cleared,
+}
+
 pub struct StageSim {
     std: Std,
     events: Vec<TimelineFrame>,
@@ -30,6 +41,7 @@ pub struct StageSim {
     pub enemies_spawned: u32,
     pub enemies_killed: u32,
     pub player_hits: u32,
+    pub phase: Phase,
 }
 
 impl StageSim {
@@ -47,6 +59,7 @@ impl StageSim {
             enemies_spawned: 0,
             enemies_killed: 0,
             player_hits: 0,
+            phase: Phase::Trash,
         }
     }
 
@@ -54,24 +67,26 @@ impl StageSim {
         self.enemies.iter().filter(|e| !e.killed).count()
     }
 
-    /// True once the timeline is exhausted and no enemies remain.
+    /// True once the stage is cleared or the player is out of lives.
     pub fn finished(&self) -> bool {
-        self.ev_i >= self.events.len() && self.alive_enemies() == 0
+        self.phase == Phase::Cleared || self.player.gameover
     }
 
     /// Advance the whole stage one frame.
     pub fn step(&mut self, input: &Input) {
         self.player.update(input);
 
-        // 1. Spawn enemies whose timeline frame has arrived.
-        while self.ev_i < self.events.len() && self.events[self.ev_i].frame <= self.frame {
-            for sp in &self.events[self.ev_i].spawns {
-                let mut e = Enemy::spawn(sp.x as i32, sp.y as i32);
-                e.script_index = sp.script_index as usize;
-                self.enemies.push(e);
-                self.enemies_spawned += 1;
+        // 1. Spawn enemies whose timeline frame has arrived (Trash phase only).
+        if self.phase == Phase::Trash {
+            while self.ev_i < self.events.len() && self.events[self.ev_i].frame <= self.frame {
+                for sp in &self.events[self.ev_i].spawns {
+                    let mut e = Enemy::spawn(sp.x as i32, sp.y as i32);
+                    e.script_index = sp.script_index as usize;
+                    self.enemies.push(e);
+                    self.enemies_spawned += 1;
+                }
+                self.ev_i += 1;
             }
-            self.ev_i += 1;
         }
 
         // 2. Run each enemy's script (movement + firing). Disjoint field
@@ -147,6 +162,17 @@ impl StageSim {
 
         // 6. Drop dead enemies, advance time.
         self.enemies.retain(|e| !e.killed);
+
+        // 7. Stage progression. When the trash timeline is exhausted and the
+        //    field is clear, the boss would appear (TODO). Until the boss is
+        //    implemented, fall straight through to Cleared.
+        if self.phase == Phase::Trash && self.ev_i >= self.events.len() && self.enemies.is_empty() {
+            self.phase = Phase::Boss;
+        }
+        if self.phase == Phase::Boss {
+            self.phase = Phase::Cleared; // no boss yet
+        }
+
         self.frame = self.frame.wrapping_add(1);
     }
 }
