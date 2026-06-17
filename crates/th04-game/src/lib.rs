@@ -28,7 +28,13 @@ const PLAYER: usize = 1;
 pub struct DrawData {
     player_wh: (f32, f32),
     has_player_sprite: bool,
-    tile_base: usize,
+    /// Background tiles are packed into one atlas texture so the whole
+    /// background draws in a single batch (per-tile textures = hundreds of
+    /// draw calls, which made WebGL drop tiles / flicker).
+    tile_atlas: usize,
+    tile_cols: usize,
+    atlas_w: f32,
+    atlas_h: f32,
     ntiles: usize,
     cel_idx: HashMap<u16, (usize, f32, f32)>,
     map: Option<Map>,
@@ -49,18 +55,29 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
     };
     let mut textures: Vec<Texture> = vec![white, player_tex];
 
-    // Background tileset (MPN) + layout (MAP).
+    // Background tileset (MPN) + layout (MAP), packed into one atlas texture.
     let mpn = arc.get(&std_name.replace(".STD", ".MPN")).and_then(|b| Mpn::parse(&b));
     let map = arc.get(&std_name.replace(".STD", ".MAP")).and_then(|b| Map::parse(&b));
-    let tile_base = textures.len();
-    let ntiles = match &mpn {
-        Some(m) => {
-            for i in 0..m.count {
-                textures.push(engine.create_texture(&m.decode_tile(i, None).unwrap(), 16, 16));
+    let tile_cols = 16usize;
+    let (tile_atlas, atlas_w, atlas_h, ntiles) = match &mpn {
+        Some(m) if m.count > 0 => {
+            let rows = m.count.div_ceil(tile_cols);
+            let (aw, ah) = (tile_cols * 16, rows * 16);
+            let mut atlas = vec![0u8; aw * ah * 4];
+            for ti in 0..m.count {
+                let tile = m.decode_tile(ti, None).unwrap(); // 16x16 RGBA
+                let (ax, ay) = ((ti % tile_cols) * 16, (ti / tile_cols) * 16);
+                for y in 0..16 {
+                    let s = (y * 16) * 4;
+                    let d = ((ay + y) * aw + ax) * 4;
+                    atlas[d..d + 64].copy_from_slice(&tile[s..s + 64]);
+                }
             }
-            m.count
+            let idx = textures.len();
+            textures.push(engine.create_texture(&atlas, aw as u32, ah as u32));
+            (idx, aw as f32, ah as f32, m.count)
         }
-        None => 0,
+        _ => (0, 1.0, 1.0, 0),
     };
 
     // Sprite cels at their PAT_* bases (main_pat.h).
@@ -89,7 +106,10 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
     let dd = DrawData {
         player_wh,
         has_player_sprite: mari.is_some(),
-        tile_base,
+        tile_atlas,
+        tile_cols,
+        atlas_w,
+        atlas_h,
         ntiles,
         cel_idx,
         map,
@@ -134,7 +154,17 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             for col in 0..map::TILES_X {
                 let ti = Map::tile_index(mp.sections[sec][rs][col]);
                 if ti < dd.ntiles {
-                    cmds.push(DrawCmd { tex: dd.tile_base + ti, dst: [PF_LEFT + (col * 16) as f32, sy, 16.0, 16.0], src: [0.0, 0.0, 1.0, 1.0], tint: [1.0; 4], rot: 0.0 });
+                    // UV into the tile atlas (all tiles share one texture).
+                    let (ax, ay) = ((ti % dd.tile_cols) * 16, (ti / dd.tile_cols) * 16);
+                    let (u0, v0) = (ax as f32 / dd.atlas_w, ay as f32 / dd.atlas_h);
+                    let (u1, v1) = ((ax + 16) as f32 / dd.atlas_w, (ay + 16) as f32 / dd.atlas_h);
+                    cmds.push(DrawCmd {
+                        tex: dd.tile_atlas,
+                        dst: [PF_LEFT + (col * 16) as f32, sy, 16.0, 16.0],
+                        src: [u0, v0, u1, v1],
+                        tint: [1.0; 4],
+                        rot: 0.0,
+                    });
                 }
             }
         }
