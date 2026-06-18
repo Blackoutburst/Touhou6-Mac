@@ -7,16 +7,13 @@
 //! hitboxes: player shots damage enemies (kill → score), and enemy bullets that
 //! reach the player count as hits. Positions are subpixels (16/px).
 
-use crate::boss::{Boss, Midboss, BOSS_HIT};
+use crate::boss::{Boss, BossEnv, BossKind, Midboss, BOSS_HIT};
 use crate::bullet::BulletPool;
+use crate::effects::EffectPool;
 use crate::enemy_vm::Enemy;
 use crate::player::{Input, Player};
 use crate::stage::{Std, TimelineFrame};
 
-// Stage-1 boss placeholder stats (TODO: real values from the MAIN.EXE overlay,
-// which ReC98 hasn't decompiled).
-const BOSS_HP: i32 = 1500;
-const BOSS_PHASES: u8 = 4;
 // Midboss-1 hitbox half-extent (RE: 24×16) and activation frame (placeholder
 // until the per-stage value is located).
 const MIDBOSS_HIT: i32 = 24 * SUBPIXEL;
@@ -71,12 +68,18 @@ pub struct StageSim {
     pub boss: Option<Boss>,
     pub midboss: Option<Midboss>,
     pub items: Vec<Item>,
+    /// Non-damaging boss telegraphs (gather/circle/spark markers).
+    pub effects: EffectPool,
+    /// Which boss spawns at the boss phase (`None` = no roster boss, e.g. Extra).
+    boss_kind: Option<BossKind>,
     midboss_done: bool,
     rng: u32,
 }
 
 impl StageSim {
-    pub fn new(std: Std, shot_type: u8) -> Self {
+    /// Build a sim for a stage. `boss_kind` is the end-of-stage boss
+    /// ([`BossKind::for_stage`]); pass `None` for a stage with no roster boss.
+    pub fn new(std: Std, shot_type: u8, boss_kind: Option<BossKind>) -> Self {
         let events = std.timeline_events();
         StageSim {
             std,
@@ -94,6 +97,8 @@ impl StageSim {
             boss: None,
             midboss: None,
             items: Vec::new(),
+            effects: EffectPool::new(),
+            boss_kind,
             midboss_done: false,
             rng: 0x9e37_79b9,
         }
@@ -189,8 +194,15 @@ impl StageSim {
 
         // 2b. Boss (during the boss phase).
         if self.phase == Phase::Boss {
+            let frame = self.frame;
             if let Some(b) = self.boss.as_mut() {
-                b.update(player_pos, &mut self.bullets);
+                let mut env = BossEnv {
+                    pool: &mut self.bullets,
+                    fx: &mut self.effects,
+                    player: player_pos,
+                    frame,
+                };
+                b.update(&mut env);
             }
         }
         // 2c. Midboss.
@@ -198,8 +210,9 @@ impl StageSim {
             m.update(&mut self.bullets);
         }
 
-        // 3. Move bullets.
-        self.bullets.update();
+        // 3. Move bullets + age boss telegraphs.
+        self.bullets.update(player_pos, self.frame);
+        self.effects.update();
 
         // 4. Player shots vs enemies.
         for s in self.player.shots.iter_mut() {
@@ -234,6 +247,20 @@ impl StageSim {
                     if s.active && (s.x - b.x).abs() < BOSS_HIT && (s.y - b.y).abs() < BOSS_HIT {
                         b.damage(s.damage);
                         s.active = false;
+                    }
+                }
+                // Destructible satellites (Marisa's bits, hp > 0) can be shot
+                // down; Reimu's orbs are invulnerable (hp 0) and skipped.
+                let r = 12 * SUBPIXEL;
+                for o in b.orbits.iter_mut().filter(|o| (1..=3).contains(&o.flag) && o.hp > 0) {
+                    for s in self.player.shots.iter_mut() {
+                        if s.active && (s.x - o.cx).abs() < r && (s.y - o.cy).abs() < r {
+                            o.hp -= s.damage;
+                            s.active = false;
+                            if o.hp <= 0 {
+                                o.flag = 0;
+                            }
+                        }
                     }
                 }
             }
@@ -271,6 +298,15 @@ impl StageSim {
             if !died {
                 if let Some(b) = &self.boss {
                     if !b.defeated && (b.x - px).abs() < BOSS_HIT && (b.y - py).abs() < BOSS_HIT {
+                        died = true;
+                    }
+                    // Orbs/bits are solid: touching one kills the player.
+                    let r = 12 * SUBPIXEL;
+                    if !died
+                        && b.orbits.iter().any(|o| {
+                            (1..=3).contains(&o.flag) && (o.cx - px).abs() < r && (o.cy - py).abs() < r
+                        })
+                    {
                         died = true;
                     }
                 }
@@ -327,7 +363,7 @@ impl StageSim {
             && self.enemies.is_empty()
         {
             self.phase = Phase::Boss;
-            self.boss = Some(Boss::new(BOSS_HP, BOSS_PHASES));
+            self.boss = self.boss_kind.map(Boss::from_kind);
         }
         if self.phase == Phase::Boss && self.boss.as_ref().map(Boss::done).unwrap_or(true) {
             self.phase = Phase::Cleared;
@@ -363,7 +399,7 @@ mod tests {
 
     #[test]
     fn spawns_and_kills_enemy() {
-        let mut sim = StageSim::new(tiny_stage(), 0);
+        let mut sim = StageSim::new(tiny_stage(), 0, Some(BossKind::Orange));
         // place a player shot right on the enemy spawn and run a few frames
         let mut input = Input::default();
         input.shoot = true;
@@ -371,5 +407,52 @@ mod tests {
             sim.step(&input);
         }
         assert!(sim.enemies_spawned >= 1, "enemy should have spawned");
+    }
+
+    #[test]
+    fn boss_phase_spawns_the_selected_boss() {
+        // Empty timeline → once the midboss interlude is done and the field is
+        // clear, the boss phase spawns whatever kind the stage selected.
+        let std = Std {
+            map_section_order: vec![],
+            scroll_speeds: vec![],
+            enemy_scripts: vec![],
+            timeline: vec![0, 0, 0], // frame 0 → end-of-timeline immediately
+        };
+        let mut sim = StageSim::new(std, 0, Some(BossKind::Elly));
+        // Skip the midboss interlude (its activation frame is a placeholder).
+        sim.midboss_done = true;
+        sim.player.lives = 9; // survive long enough to reach the boss
+        for _ in 0..16000 {
+            let mut input = Input::default();
+            input.shoot = true;
+            sim.step(&input);
+            if sim.phase == Phase::Boss {
+                break;
+            }
+        }
+        assert_eq!(sim.phase, Phase::Boss, "should reach the boss phase");
+        assert!(sim.boss.is_some(), "the selected boss should spawn");
+    }
+
+    #[test]
+    fn extra_stage_has_no_roster_boss() {
+        let std = Std {
+            map_section_order: vec![],
+            scroll_speeds: vec![],
+            enemy_scripts: vec![],
+            timeline: vec![0, 0, 0],
+        };
+        let mut sim = StageSim::new(std, 0, None);
+        sim.midboss_done = true;
+        for _ in 0..200 {
+            sim.step(&Input::default());
+            if sim.phase == Phase::Cleared {
+                break;
+            }
+        }
+        // No boss to fight → the stage clears straight through.
+        assert!(sim.boss.is_none());
+        assert_eq!(sim.phase, Phase::Cleared);
     }
 }

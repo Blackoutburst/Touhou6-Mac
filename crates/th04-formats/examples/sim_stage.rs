@@ -4,6 +4,7 @@
 //!
 //!   cargo run -p th04-formats --example sim_stage -- <archive> <STnn.STD> [frames]
 
+use th04_formats::boss::BossKind;
 use th04_formats::par::Archive;
 use th04_formats::player::Input;
 use th04_formats::sim::StageSim;
@@ -19,7 +20,15 @@ fn main() {
     let std = Std::parse(&arc.get(&a[1]).unwrap()).expect("parse STD");
     let frames: u32 = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(2000);
 
-    let mut sim = StageSim::new(std, 0);
+    // Stage index from the STD name (ST00 → 0); shot_type 0 = Reimu → Marisa rival.
+    let stage_idx: usize = a[1]
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0);
+    let mut sim = StageSim::new(std, 0, BossKind::for_stage(stage_idx, false));
     println!("simulating {} for {} frames (shoot held)\n", a[1], frames);
     println!("  frame  alive  spawned  killed   score  bullets  pshots  hits  lives");
     for f in 0..frames {

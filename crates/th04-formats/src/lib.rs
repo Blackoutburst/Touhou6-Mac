@@ -23,6 +23,7 @@ pub mod bft;
 pub mod boss;
 pub mod bullet;
 pub mod cdg;
+pub mod effects;
 pub mod enemy;
 pub mod enemy_vm;
 pub mod map;

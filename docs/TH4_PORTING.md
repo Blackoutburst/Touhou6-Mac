@@ -180,20 +180,106 @@ more reverse-engineering** than TH06 required, concentrated in Phases 1, 3, 4. T
 flip side: enemy patterns being `.STD` bytecode (not hand-coded asm) means the
 gameplay core is more tractable than TH01/TH02 would be.
 
-## Remaining work / TODO (as of 2026-06-17)
+## Remaining work / TODO (as of 2026-06-18)
 
-Stage 1 is playable end-to-end in the browser (native-Rust + WASM): real assets
-(PAR archive, PI, CDG/CD2, BFNT, MPN/MAP), the enemy-script VM, bullet patterns,
-player (per-character shots + bombs), lives/death/respawn, items, midboss (RE'd),
-a boss fight, stage clear, scrolling tile background, sprites, and a HUD.
+All six stages run end-to-end (native-Rust + WASM): real assets (PAR archive, PI,
+CDG/CD2, BFNT, MPN/MAP), the enemy-script VM, bullet patterns, player
+(per-character shots + bombs), lives/death/respawn, items, midboss (RE'd), the
+correct **per-stage boss** (selection wired), stage clear, scrolling tile
+background, sprites, and a HUD. (Stage 1 is the most polished; stages 2–6 still
+need their own midbosses + palettes.)
 
 What's left, roughly in priority order:
 
-### Fidelity (make stage 1 exact)
-- **Stage bosses 1–5** — *not in ReC98* (only b6/extra are decompiled). They live
-  in `MAIN.EXE` overlays that ZUN packed with `zun.com`. Doing them faithfully
-  needs: unpack `MAIN.EXE` → locate + disassemble each boss overlay → port. Until
-  then `boss.rs` is a generic multi-phase stand-in. (Biggest single task.)
+### Stage bosses 1–5 — DONE (ported from asm)
+The per-boss C++ is *not* decompiled in ReC98 (only b6/Extra are), but ReC98 is
+100% position-independent, so each boss's full per-frame update exists as x86
+disassembly in `th04_main.asm`. All five are ported straight from that asm
+(Normal rank; `bullet_template_tune` is a no-op for counts on Normal), living in
+`crates/th04-formats/src/boss/` (one file per boss) on the shared `Boss` engine
+(`boss/mod.rs`, modelled on `th04/main/boss/boss.cpp`). Each has a test that runs
+it through all phases to defeat; render any with
+`th04-game stage <archive> ST00.STD boss:<name> out.png`.
+
+| Stage | Boss | asm | file | notes |
+|---|---|---|---|---|
+| 1 | Orange | `@orange_update$qv` 20254 (+`orange_195E4/19686/19720/197BB/19814/19878/1998B`) | `orange.rs` | 6 phases: charge → triple-ring → 4-pattern barrage → wandering spray → rotating spiral → defeat |
+| 2 | Kurumi | `@kurumi_update$qv` 19251 (+`kurumi_18A79..18F8B`, `kurumi_spawnrays_add`) | `kurumi.rs` | spawn-ray engine (ray flies to edge → erupts into aimed rings), expanding 22-rings, decel rings |
+| 3 | Elly | `@elly_update$qv` 24137 (+`elly_1BD4B..1C251`) | `elly.rs` | 4 HP-gated tiers cycling spreads / aimed rings / 48-ring / quad random rings |
+| 4 | Reimu / Marisa | `@reimu_update$qv` 27309 / `@marisa_update$qv` 16535 (+`b4r.cpp`/`b4m.cpp`) | `rival.rs` | rival chosen by playchar; 8 orbs / 4 bits spin out + orbit; tiered patterns |
+| 5 | Yuuka | `@yuuka5_update$qv` 14335 (+`yuuka5_15F97..16389`, `b6.cpp`) | `yuuka.rs` | chasecross sweep + spin rings + safety bounce, final **Master Spark** tier |
+
+Deviations (feel-preserving, see `boss/mod.rs` docs): the exact `randring2`
+sequence is replaced by a local PRNG; cosmetic telegraphs (gather/circle/spark)
+are surfaced as non-damaging `effects` markers (now rendered).
+
+### Exact-fidelity pass (in progress)
+Upgrading each boss from faithful-structure to opcode-exact:
+- **Bullet physics — DONE** (`bullet.rs`): the real slow-bullet decelerate ramp
+  (`BMF_DECELERATE`: <4px bullets start at 4.5px and ramp down over 32f) and all
+  special motions (`Bsm`: `SPEEDUP`, `DECEL_THEN_TURN[_AIMED]`, `DECEL_TO_ANGLE`,
+  `BOUNCE_*`, `GRAVITY`), from `bullet/update.cpp`. Applies to every boss + trash.
+- **Elly — EXACT** (`boss/elly.rs`): figure-8 orbit (`elly_1BC73`), 5 HP tiers
+  with the real per-tier mode windows, all 10 modes, the 48-ring finale. Only the
+  `byte_25A26` aim-anim counter (from the 290-line `elly_1B95C`) is approximated
+  by a frame countdown.
+- **Reimu — EXACT** (`boss/reimu.rs`): the orb engine (spin-out→fly+bounce+
+  gravity, `reimu_1EBF3`/`orbs_add_*`), all 13 phases (attacks 2/4/6/8/9 at gates
+  7900/6300/4500/2700/900/0, moves 3/5/7/10, final 11), jink movement, every mode
+  (`reimu_1ED15`..`1F17C`). A few `boss_statebyte` setup values use Normal-rank
+  constants.
+- **Marisa — EXACT** (`boss/marisa.rs`): the four destructible **bits** (hp
+  220/400/280/450) that spin out to a 64px orbit and act as armour
+  (`marisa_179BC` divides damage by `bits_alive+1`), `flystep_pointreflected`
+  flight, the `0xFF` wander-selector driving the mode cycle, and all 10 modes
+  (`marisa_16DFF`..`17813`). Bits are shoot-down-able and solid (sim handles
+  shot/player collision vs `boss.orbits`). A couple of `boss_statebyte` setup
+  values use Normal-rank constants.
+- **Yuuka — EXACT** (`boss/yuuka.rs`): all 19 phases (intro/settle, three
+  attack-A/glide/safety-circle cycles, attack-B, Master Spark ×2, final, defeat)
+  with the exact HP arithmetic, the `15ECE` inter-pattern glide, chasecross
+  sweep, spin-rings + SPEEDUP cross bursts, bouncing safety-circle crosses,
+  accelerating aimed ring, narrowing spread, and the final symmetric spreads.
+  The Master Spark's rotating ring + random fill are exact; its **thick laser**
+  is approximated as a dense fast column + a `circle_grow` telegraph.
+- **Kurumi/Orange — tightened**: Kurumi's spawn-ray bursts now use `Bsm::Speedup`
+  and its phase-3 rings `Bsm::DecelThenTurn` (±0x40, exact); Orange's sub-4px
+  bullets ride the real decelerate ramp automatically. **All 5 stage bosses are
+  now exact.**
+- **Stage 6 Yuuka — DONE** (`boss/yuuka6.rs`): `b6.cpp` turned out to be only
+  struct/anim declarations — the logic is asm (`@yuuka6_update$qv` 22545 + ~30
+  subs), the largest boss. All 18 phases + exact HP arithmetic (13300 → 10600 →
+  7600 → 5400 → 3400 → 1200 → 0), parasol vanish/appear, the **mirror point**
+  (twin attacks from Yuuka + her reflection), homing **chasecross** bullets
+  (reusing the satellite pool; sim resolves their collision), the bouncing
+  decel-turn cross rings, gravity randoms, mirrored spreads, sweep, rotating
+  rings, and the finale. Faithful-structure rather than every-sub-exact (it is
+  ~2× any other boss): the safety-circle is a shrinking telegraph + aimed-ring
+  fire, the thick laser a fast column, and the parasol-shield damage-redirect is
+  folded into the normal hittest. **This completes the entire stages 1-6 boss
+  roster.**
+
+**Boss roster status:** stages 1-5 fully exact, stage 6 faithful-structure +
+signature mechanics. Bullet physics (decelerate ramp + all `BSM_*` special
+motions) exact across all of them. 30 `th04-formats` tests pass; render any with
+`th04-game stage <archive> ST00.STD boss:<orange|kurumi|elly|reimu|marisa|yuuka|yuuka6>`.
+
+**Per-stage boss selection — DONE.** `BossKind::for_stage(stage, playing_marisa)`
+maps `STnn.STD` → the stage's boss (stage 4 = the rival, chosen by playchar:
+Reimu's player faces Marisa, Marisa's faces Reimu; `ST06`/Extra = no roster
+boss). `StageSim::new(std, shot_type, boss_kind)` carries it and spawns
+`Boss::from_kind` at the boss phase instead of the old hardcoded `Boss::orange()`.
+`th04-game setup` derives it from the STD name + character, so
+`th04-game play <archive> STnn.STD` now reaches the right boss for any stage, and
+`th04-game stage … boss` (no name) renders that stage's own boss. Verified on the
+real archive: ST00→Orange(3050), ST01→Kurumi(4800), ST02→Elly(6000),
+ST03→rival(6000), ST04→Yuuka(9000), ST05→Yuuka6(13300). Stages 2–6 timelines
+already parse/run, so all stages are now reachable end-to-end.
+
+**Remaining boss work:** midbosses 1–3 are asm-only (`@midbossN_update$qv`);
+only midboss 1 is RE'd, and `MIDBOSS_FRAME` is still a placeholder for all stages
+(the boss phase is gated behind a midboss interlude that currently always spawns
+Midboss 1 at frame 2400 regardless of stage).
 - **Exact player shot tables** — Reimu/Marisa A/B × 10 power levels + Marisa A's
   option lasers (the ~40 `shot_*` functions in `th04_main.asm`). Currently a
   simplified fan/column model.
@@ -213,7 +299,10 @@ What's left, roughly in priority order:
   seams show when upscaled.
 
 ### Content / systems
-- **Stages 2–6** — parse + run `ST01..ST06` (the formats already support them).
+- **Stages 2–6** — reachable end-to-end: `ST01..ST06` timelines parse/run and
+  each spawns its correct boss (per-stage selection wired). Still per-stage:
+  the real midboss-activation frames (placeholder), the per-stage midbosses 2–6
+  (asm-only), and the stage palettes.
 - **Dialogue** — `.TXT` (scrambled Shift-JIS) + the dialog system.
 - **Music** — `.M26`/`.M86` PMD songs (YM2203/YM2608); needs an FM synth core or
   pre-rendered audio, then wire into `th06-engine`'s audio.

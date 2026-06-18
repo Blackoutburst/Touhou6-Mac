@@ -6,7 +6,7 @@
 //!
 //! The `play` loop and the WASM build (lib::web) share lib::setup / draw_frame.
 
-use th04_formats::boss::{Boss, Midboss};
+use th04_formats::boss::{Boss, BossKind, Midboss};
 use th04_formats::par::Archive;
 use th04_formats::pi::Pi;
 use th04_formats::player::Input;
@@ -61,8 +61,16 @@ fn stage(a: &[String]) {
     let std_name = &a[1];
     let until: u32 = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(300);
     let out = a.get(3).cloned().unwrap_or_else(|| "stage.png".into());
-    let force_boss = a.get(2).map(|s| s == "boss").unwrap_or(false);
-    let force_midboss = a.get(2).map(|s| s == "midboss").unwrap_or(false);
+    // `boss` (= this stage's boss) or `boss:<name>` to force a specific one.
+    let boss_arg = a.get(2).map(String::as_str).unwrap_or("");
+    let force_boss = boss_arg == "boss" || boss_arg.starts_with("boss:");
+    let force_midboss = boss_arg == "midboss";
+    // Default to the stage's own boss (Reimu's player at the rival fight); an
+    // explicit `boss:<name>` overrides it.
+    let stage_boss = th04_game::stage_index(std_name);
+    let default_boss = BossKind::for_stage(stage_boss, false).unwrap_or(BossKind::Orange);
+    let boss_name = boss_arg.strip_prefix("boss:").map(str::to_string)
+        .unwrap_or_else(|| format!("{:?}", default_boss).to_lowercase());
 
     let engine = Engine::new();
     let (textures, dd, mut sim) = setup(&engine, &arc, std_name, 2);
@@ -78,14 +86,30 @@ fn stage(a: &[String]) {
         sim.player.lives = 2;
         if force_boss {
             sim.phase = Phase::Boss;
-            sim.boss.get_or_insert_with(|| Boss::new(1500, 4));
+            let make = match boss_name.as_str() {
+                "kurumi" => Boss::kurumi,
+                "elly" => Boss::elly,
+                "reimu" => Boss::reimu,
+                "marisa" => Boss::marisa,
+                "yuuka" => Boss::yuuka,
+                "yuuka6" => Boss::yuuka6,
+                _ => Boss::orange,
+            };
+            sim.boss.get_or_insert_with(make);
         } else {
             sim.midboss.get_or_insert_with(|| Midboss::new(192 * 16));
         }
-        for _ in 0..160 {
+        // Run past the boss intro, then keep going until a frame actually shows
+        // danmaku (so the screenshot is representative), capped well above any
+        // intro length.
+        let min_frames = if force_boss { 360 } else { 160 };
+        for f in 0..900 {
             let mut input = Input::default();
             input.shoot = true;
             sim.step(&input);
+            if f >= min_frames && sim.bullets.active_count() >= 12 {
+                break;
+            }
         }
     }
 

@@ -31,7 +31,7 @@ fn main() {
     );
     for f in 0..frames {
         e.step(script, 16 /* scroll 1px/frame */, player, &mut pool);
-        pool.update();
+        pool.update(player, f as u16);
         if f % 30 == 0 || e.killed {
             println!(
                 "  f{:>4}: pos=({:>4},{:>4})px angle={:>3} speed={:>3} hp={} fires={} bullets={} alive={} killed={}",

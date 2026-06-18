@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 
 use th04_formats::bft::Bft;
+use th04_formats::boss::BossKind;
+use th04_formats::effects::EffectKind;
 use th04_formats::map::{self, Map};
 use th04_formats::mpn::Mpn;
 use th04_formats::par::Archive;
@@ -41,6 +43,18 @@ pub struct DrawData {
     cel_idx: HashMap<u16, (usize, f32, f32)>,
     map: Option<Map>,
     section_order: Vec<u8>,
+}
+
+/// 0-based stage index from an `STnn.STD` filename (`ST00.STD` → 0). Defaults
+/// to 0 if the digits can't be parsed.
+pub fn stage_index(std_name: &str) -> usize {
+    std_name
+        .trim_start_matches(|c: char| !c.is_ascii_digit())
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0)
 }
 
 /// Build all textures + draw metadata + the stage sim from an archive.
@@ -112,7 +126,12 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
 
     let std = Std::parse(&arc.get(std_name).unwrap_or_default()).expect("parse STD");
     let section_order = std.map_section_order.clone();
-    let sim = StageSim::new(std, shot_type);
+    // Pick the end-of-stage boss from the stage number in the STD name
+    // (`STnn.STD` → stage index nn). shot_type >= 2 = Marisa, who faces Reimu at
+    // the stage-4 rival fight (and vice-versa).
+    let stage_idx = stage_index(std_name);
+    let boss_kind = BossKind::for_stage(stage_idx, shot_type >= 2);
+    let sim = StageSim::new(std, shot_type, boss_kind);
     let dd = DrawData {
         player_wh,
         has_player_sprite: mari.is_some(),
@@ -226,8 +245,33 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             None => cmds.push(solid(px, py, 18.0, 18.0, [1.0, 0.3, 0.3, 1.0])),
         }
     }
+    // Boss telegraphs (gather/circle/spark): non-damaging charge-up cues,
+    // faded by age so they pulse.
+    for fx in &sim.effects.effects {
+        let life = 1.0 - (fx.age as f32 / fx.ttl.max(1) as f32);
+        let (sz, c) = match fx.kind {
+            EffectKind::Gather => (8.0 + 28.0 * (1.0 - life), [0.6, 0.9, 1.0, 0.30 * life]),
+            EffectKind::CircleShrink => (8.0 + 24.0 * life, [1.0, 1.0, 1.0, 0.30 * life]),
+            EffectKind::CircleGrow => (8.0 + 24.0 * (1.0 - life), [1.0, 0.9, 0.5, 0.30 * life]),
+            EffectKind::Spark => (10.0 + 30.0 * (1.0 - life), [1.0, 0.7, 0.2, 0.45 * life]),
+        };
+        cmds.push(solid(fx.x as f32 / 16.0, fx.y as f32 / 16.0, sz, sz, c));
+    }
     if let Some(b) = &sim.boss {
         if !b.defeated {
+            // Spawn-rays (Kurumi): dotted line from the boss to the growing tip.
+            for r in b.rays.iter().filter(|r| r.flag != 0) {
+                for k in 0..=6 {
+                    let t = k as f32 / 6.0;
+                    let x = (r.ox as f32 + (r.tx - r.ox) as f32 * t) / 16.0;
+                    let y = (r.oy as f32 + (r.ty - r.oy) as f32 * t) / 16.0;
+                    cmds.push(solid(x, y, 6.0, 6.0, [0.6, 0.8, 1.0, 0.9]));
+                }
+            }
+            // Orbiting satellites (Reimu orbs / Marisa bits).
+            for o in b.orbits.iter().filter(|o| o.flag != 0) {
+                cmds.push(solid(o.cx as f32 / 16.0, o.cy as f32 / 16.0, 16.0, 16.0, [0.7, 0.85, 1.0, 1.0]));
+            }
             cmds.push(solid(b.x as f32 / 16.0, b.y as f32 / 16.0, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0]));
         }
     }
