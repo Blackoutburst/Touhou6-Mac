@@ -317,6 +317,10 @@ fn stage(a: &[String]) {
                 break;
             }
         }
+        // The forced path skips the natural boss spawn; show the name card too.
+        if force_boss {
+            sim.boss_intro = sim.boss_intro.max(80);
+        }
     }
 
     let cmds = draw_frame(&sim, &dd);

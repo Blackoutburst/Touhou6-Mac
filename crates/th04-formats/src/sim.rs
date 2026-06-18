@@ -79,9 +79,15 @@ pub struct StageSim {
     boss_kind: Option<BossKind>,
     /// How many [`EXTEND_SCORES`] milestones have already granted a life.
     pub extends_awarded: usize,
+    /// Frames remaining on the boss-appears name card (counts down from
+    /// [`BOSS_INTRO_FRAMES`] when the boss spawns); 0 = not showing.
+    pub boss_intro: u32,
     midboss_done: bool,
     rng: u32,
 }
+
+/// How long the boss name card shows when the boss appears.
+pub const BOSS_INTRO_FRAMES: u32 = 140;
 
 impl StageSim {
     /// Build a sim for a stage. `boss_kind` is the end-of-stage boss
@@ -107,6 +113,7 @@ impl StageSim {
             effects: EffectPool::new(),
             boss_kind,
             extends_awarded: 0,
+            boss_intro: 0,
             midboss_done: false,
             rng: 0x9e37_79b9,
         }
@@ -400,7 +407,11 @@ impl StageSim {
         {
             self.phase = Phase::Boss;
             self.boss = self.boss_kind.map(Boss::from_kind);
+            if self.boss.is_some() {
+                self.boss_intro = BOSS_INTRO_FRAMES;
+            }
         }
+        self.boss_intro = self.boss_intro.saturating_sub(1);
         if self.phase == Phase::Boss && self.boss.as_ref().map(Boss::done).unwrap_or(true) {
             self.phase = Phase::Cleared;
         }

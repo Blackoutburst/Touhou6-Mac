@@ -84,6 +84,8 @@ pub struct DrawData {
     cel_idx: HashMap<u16, (usize, f32, f32)>,
     map: Option<Map>,
     section_order: Vec<u8>,
+    /// 1-based stage number, for the "STAGE n" intro card.
+    stage_no: usize,
 }
 
 /// 0-based stage index from an `STnn.STD` filename (`ST00.STD` → 0). Defaults
@@ -413,6 +415,7 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
             cel_idx,
             map,
             section_order,
+            stage_no: stage_index(std_name) + 1,
         };
         stages.push(StageAssets { dd, std, name: std_name.to_string() });
     }
@@ -738,6 +741,25 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
         cmds.push(rect(PF_LEFT, PF_TOP + 2.0, PF_W, 5.0, [0.2, 0.05, 0.1, 1.0]));
         let w = PF_W * (cur.max(0) as f32 / max as f32);
         cmds.push(rect(PF_LEFT, PF_TOP + 2.0, w, 5.0, [1.0, 0.3, 0.4, 1.0]));
+    }
+
+    // Intro cards, centred on the playfield (drawn on top). The "STAGE n" card
+    // greets the stage; the boss name card appears when the boss spawns.
+    if !dd.hud_font.is_empty() {
+        let cx = PF_LEFT + PF_W / 2.0;
+        let centered = |cmds: &mut Vec<DrawCmd>, y: f32, s: &str, px: f32, t: [f32; 4]| {
+            draw_hud_text(cmds, &dd.hud_font, cx - hud_text_width(s, px) / 2.0, y, s, px, t);
+        };
+        if sim.phase == th04_formats::sim::Phase::Trash && (15u16..110).contains(&sim.frame) {
+            centered(&mut cmds, 180.0, &format!("STAGE {}", dd.stage_no), 30.0, [1.0; 4]);
+        }
+        if sim.boss_intro > 0 {
+            if let Some(b) = &sim.boss {
+                // Below the boss (which sits at the top) so the name stays clear.
+                centered(&mut cmds, 232.0, "BOSS", 16.0, [1.0, 0.5, 0.55, 1.0]);
+                centered(&mut cmds, 256.0, b.kind().name(), 26.0, [1.0, 0.8, 0.85, 1.0]);
+            }
+        }
     }
     cmds
 }

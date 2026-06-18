@@ -60,6 +60,18 @@ pub enum BossKind {
 }
 
 impl BossKind {
+    /// The boss's display name (for the appears-card / HUD).
+    pub fn name(self) -> &'static str {
+        match self {
+            BossKind::Orange => "ORANGE",
+            BossKind::Kurumi => "KURUMI",
+            BossKind::Elly => "ELLY",
+            BossKind::Reimu => "REIMU HAKUREI",
+            BossKind::Marisa => "MARISA KIRISAME",
+            BossKind::Yuuka | BossKind::Yuuka6 => "YUUKA KAZAMI",
+        }
+    }
+
     /// The boss that ends stage `stage` (0-based: `ST00` = 0 = stage 1).
     /// Stage 4 (index 3) is the rival fight, decided by the player character:
     /// Reimu's player faces Marisa and vice-versa. Stages with no roster boss

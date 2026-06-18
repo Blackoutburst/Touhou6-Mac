@@ -336,6 +336,12 @@ Midboss 1 at frame 2400 regardless of stage).
   line of small blue bullets. Verified in-engine (Reimu's blue-ball orb ring, the
   midboss maid firing). Boss **portraits** (`KAO*.CD2`, decode fine with the
   stage palette) are unused pending the dialogue system.
+- **Intro cards — DONE.** A "STAGE n" card greets each stage (frames 15-110)
+  and a "BOSS / <name>" card shows when the boss appears (`StageSim::boss_intro`
+  counts down `BOSS_INTRO_FRAMES`; `BossKind::name()`), both drawn in GAMEFT,
+  centred on the playfield. (`EYE*.CDG` turned out to be the title's
+  colour-cycle frames, not per-stage cards; there is no sidebar/frame graphic in
+  the archive — TH04 draws that via the PC-98 text layer.)
 - **Bomb effect — DONE.** Triggering a bomb now plays the real explosion
   animation (`MIKO32.BFT` cels 0-7, `DrawData::bomb_anim`) over the player,
   stepped across `BOMB_FRAMES`. (Also fixed: pressing X/Bomb in-game was wrongly
