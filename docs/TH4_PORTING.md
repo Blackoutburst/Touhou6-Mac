@@ -354,6 +354,9 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Player-death explosion — DONE.** A miss now bursts an explosion at the spot
   the player was hit (`StageSim::death_fx`/`death_pos`/`DEATH_FX_FRAMES`, reusing
   `bomb_anim`) before the respawn. Verify with the `death` keyword on `stage`.
+- **Enemy-kill puffs — DONE.** Each enemy death spawns a `Spark` effect at its
+  position (`EffectPool::spark`, already rendered) for a small burst, instead of
+  vanishing silently.
 - **Still markers (intentional):** the **telegraph effects** (gather/circle/spark
   charge-up glows) stay as translucent markers — they're cosmetic cues, not
   sprites.

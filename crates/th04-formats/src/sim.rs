@@ -192,6 +192,7 @@ impl StageSim {
                         e.killed = true;
                         self.enemies_killed += 1;
                         self.score += e.score as i64;
+                        self.effects.spark(e.x, e.y); // death puff
                     }
                 }
             }
@@ -281,6 +282,7 @@ impl StageSim {
                         e.killed = true;
                         self.enemies_killed += 1;
                         self.score += e.score as i64;
+                        self.effects.spark(e.x, e.y); // death puff
                         // Drop an item (kind from the spawn; default to a point
                         // item). The exact per-enemy drop table is a refinement.
                         let kind = if e.item == 0xFF { 1 } else { e.item };
