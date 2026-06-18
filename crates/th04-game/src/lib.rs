@@ -38,12 +38,27 @@ pub struct PlayerSprite {
     has: bool,
 }
 
+/// `MIKO16.BFT` — the 16×16 sheet of bullets, player shots and items (palette
+/// embedded, so these render in their true colours). Indexed by cel number;
+/// see [`bullet_cel`] / [`item_cel`] / [`SHOT_CEL`] for the type→cel mapping.
+#[derive(Clone, Default)]
+pub struct FxSheet {
+    cels: Vec<(usize, f32, f32)>,
+}
+impl FxSheet {
+    fn cel(&self, n: usize) -> Option<(usize, f32, f32)> {
+        self.cels.get(n).copied()
+    }
+}
+
 /// Texture indices + metadata the per-frame draw needs (the textures
 /// themselves are owned by the engine once the game loop starts).
 pub struct DrawData {
     /// Player sprites by character: index 0 = Reimu (`MIKO.BFT`), 1 = Marisa
     /// (`MARI.BFT`); chosen at draw time from the player's `shot_type`.
     players: [PlayerSprite; 2],
+    /// Bullets / shots / items sheet (`MIKO16.BFT`).
+    fx: FxSheet,
     /// Background tiles are packed into one atlas texture so the whole
     /// background draws in a single batch (per-tile textures = hundreds of
     /// draw calls, which made WebGL drop tiles / flicker).
@@ -109,6 +124,55 @@ fn push_sheet(
     }
 }
 
+/// Load `MIKO16.BFT` cel-by-cel into a [`FxSheet`] (one texture per cel).
+fn build_fx_sheet(engine: &Engine, arc: &Archive, textures: &mut Vec<Texture>) -> FxSheet {
+    let mut cels = Vec::new();
+    if let Some(b) = arc.get("MIKO16.BFT").and_then(|d| Bft::parse(&d)) {
+        for n in 0..b.count {
+            match b.decode_rgba(n, Some(0)) {
+                Some(rgba) => {
+                    let idx = textures.len();
+                    textures.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
+                    cels.push((idx, b.width as f32, b.height as f32));
+                }
+                None => cels.push((0, 16.0, 16.0)),
+            }
+        }
+    }
+    FxSheet { cels }
+}
+
+/// Map a bullet's type (`patnum`, the ported `PAT_*` ids) to a `MIKO16` cel.
+/// Round-ball types render true-to-colour; the directional knife/cross types
+/// fall back to a same-colour ball (orientation isn't tracked yet).
+fn bullet_cel(patnum: u8) -> usize {
+    match patnum {
+        1 => 10, // PAT_BALL_WHITE / OUTLINED_BLUE → white ball
+        2 => 28, // PAT_BALL_BLUE → blue ball
+        3 => 29, // PAT_KNIFE/CROSS_YELLOW → yellow (ball stand-in)
+        5 => 29, // PAT_ORB_YELLOW → yellow ball
+        6 => 24, // PAT_BALL_RED → red ball
+        7 => 27, // PAT_STAR → star
+        8 => 30, // PAT_D_BLUE → blue teardrop
+        9 => 24, // PAT_SMALL_RED → red ball
+        _ => 33, // default small ball
+    }
+}
+
+/// Map a dropped item's `kind` to a `MIKO16` item cel.
+fn item_cel(kind: u8) -> usize {
+    match kind {
+        0 => 16, // power "P"
+        1 => 17, // point
+        2 => 20, // bomb "B"
+        3 => 21, // 1up
+        _ => 17,
+    }
+}
+
+/// `MIKO16` cel for the player's straight shot (white needle).
+const SHOT_CEL: usize = 9;
+
 /// A stage's background tileset (`.MPN`) packed into one atlas texture (per-tile
 /// textures = hundreds of draw calls, which made WebGL drop tiles / flicker).
 /// Returns `(atlas_index, atlas_w, atlas_h, ntiles)`.
@@ -164,6 +228,9 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
     push_sheet(engine, arc, "MIKO32.BFT", 4, &mut shared_cels, &mut textures);
     push_sheet(engine, arc, "MIKO16.BFT", 38, &mut shared_cels, &mut textures);
 
+    // Bullets / shots / items, indexed directly by MIKO16 cel number.
+    let fx = build_fx_sheet(engine, arc, &mut textures);
+
     let tile_cols = 16usize;
     let mut stages = Vec::with_capacity(stage_names.len());
     for &std_name in stage_names {
@@ -175,6 +242,7 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
         let section_order = std.map_section_order.clone();
         let dd = DrawData {
             players,
+            fx: fx.clone(),
             tile_atlas,
             tile_cols,
             atlas_w,
@@ -367,24 +435,42 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             cmds.push(solid(m.x as f32 / 16.0, m.y as f32 / 16.0, 40.0, 40.0, [0.3, 0.9, 0.9, 1.0]));
         }
     }
+    // Enemy/boss bullets — real MIKO16 sprites (true colours), marker fallback.
     for b in &sim.bullets.bullets {
-        if b.active {
-            cmds.push(solid(b.x as f32 / 16.0, b.y as f32 / 16.0, 7.0, 7.0, [1.0, 1.0, 0.6, 1.0]));
+        if !b.active {
+            continue;
+        }
+        let (x, y) = (b.x as f32 / 16.0, b.y as f32 / 16.0);
+        match dd.fx.cel(bullet_cel(b.patnum)) {
+            Some((tex, w, h)) => cmds.push(sprite(tex, x, y, w, h)),
+            None => cmds.push(solid(x, y, 7.0, 7.0, [1.0, 1.0, 0.6, 1.0])),
         }
     }
+    // Player shots.
     for s in &sim.player.shots {
-        if s.active {
-            cmds.push(solid(s.x as f32 / 16.0, s.y as f32 / 16.0, 4.0, 10.0, [0.5, 1.0, 1.0, 1.0]));
+        if !s.active {
+            continue;
+        }
+        let (x, y) = (s.x as f32 / 16.0, s.y as f32 / 16.0);
+        match dd.fx.cel(SHOT_CEL) {
+            Some((tex, w, h)) => cmds.push(sprite(tex, x, y, w, h)),
+            None => cmds.push(solid(x, y, 4.0, 10.0, [0.5, 1.0, 1.0, 1.0])),
         }
     }
-    // Dropped items (placeholder colours by kind until the item sprites are mapped).
+    // Dropped items.
     for it in &sim.items {
-        let c = match it.kind {
-            0 => [1.0, 0.25, 0.25, 1.0], // power (red)
-            1 => [0.3, 0.55, 1.0, 1.0],  // point (blue)
-            _ => [0.95, 0.9, 0.35, 1.0], // other (yellow)
-        };
-        cmds.push(solid(it.x as f32 / 16.0, it.y as f32 / 16.0, 10.0, 10.0, c));
+        let (x, y) = (it.x as f32 / 16.0, it.y as f32 / 16.0);
+        match dd.fx.cel(item_cel(it.kind)) {
+            Some((tex, w, h)) => cmds.push(sprite(tex, x, y, w, h)),
+            None => {
+                let c = match it.kind {
+                    0 => [1.0, 0.25, 0.25, 1.0],
+                    1 => [0.3, 0.55, 1.0, 1.0],
+                    _ => [0.95, 0.9, 0.35, 1.0],
+                };
+                cmds.push(solid(x, y, 10.0, 10.0, c));
+            }
+        }
     }
 
     let (ppx, ppy) = (sim.player.x as f32 / 16.0, sim.player.y as f32 / 16.0);

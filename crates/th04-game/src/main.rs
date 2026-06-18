@@ -24,6 +24,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("menu") => menu(&args[1..]),
         Some("menushot") => menushot(&args[1..]),
+        Some("sheet") => sheet(&args[1..]),
         Some("play") => play(&args[1..]),
         Some("stage") => stage(&args[1..]),
         _ => title(&args[1..]),
@@ -117,6 +118,58 @@ fn menushot(a: &[String]) {
         f = update(&EInput::synthetic(&[Key::Shoot], &[]));
     }
     save(&f, &engine, &format!("{prefix}_6play.png"));
+}
+
+/// Dump every cel of a `.BFT` sprite sheet into one PNG grid (magenta = the
+/// transparent index) so we can see what each sheet contains.
+/// `th04-game sheet <archive> <NAME.BFT> [out.png]`.
+fn sheet(a: &[String]) {
+    use th04_formats::bft::Bft;
+    let arc = read_archive(a.first().expect("usage: th04-game sheet <archive> <NAME.BFT> [out.png]"));
+    let name = a.get(1).expect("sheet name");
+    let out = a.get(2).cloned().unwrap_or_else(|| "sheet.png".into());
+    let scale: usize = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let cols_arg: usize = a.get(4).and_then(|s| s.parse().ok()).unwrap_or(16);
+    let b = arc.get(name).and_then(|d| Bft::parse(&d)).expect("parse BFT");
+    let (cw, ch) = (b.width + 2, b.height + 2);
+    let cols = b.count.min(cols_arg).max(1);
+    let rows = b.count.div_ceil(cols);
+    let (iw, ih) = (cols * cw, rows * ch);
+    let mut img = vec![0u8; iw * ih * 4];
+    for p in img.chunks_exact_mut(4) {
+        p.copy_from_slice(&[255, 0, 255, 255]); // magenta backdrop
+    }
+    for n in 0..b.count {
+        let Some(rgba) = b.decode_rgba(n, Some(0)) else { continue };
+        let (ox, oy) = ((n % cols) * cw + 1, (n / cols) * ch + 1);
+        for y in 0..b.height {
+            for x in 0..b.width {
+                let s = (y * b.width + x) * 4;
+                if rgba[s + 3] == 0 {
+                    continue;
+                }
+                let d = ((oy + y) * iw + ox + x) * 4;
+                img[d..d + 4].copy_from_slice(&rgba[s..s + 4]);
+            }
+        }
+    }
+    // Optional nearest-neighbour upscale so individual cels are readable.
+    let (fw, fh, fimg) = if scale > 1 {
+        let (sw, sh) = (iw * scale, ih * scale);
+        let mut up = vec![0u8; sw * sh * 4];
+        for y in 0..sh {
+            for x in 0..sw {
+                let s = ((y / scale) * iw + x / scale) * 4;
+                let d = (y * sw + x) * 4;
+                up[d..d + 4].copy_from_slice(&img[s..s + 4]);
+            }
+        }
+        (sw, sh, up)
+    } else {
+        (iw, ih, img)
+    };
+    image::save_buffer(&out, &fimg, fw as u32, fh as u32, image::ColorType::Rgba8).expect("save");
+    println!("{}: {} cels {}x{} (start {}) -> {} ({}x)", name, b.count, b.width, b.height, b.start, out, scale);
 }
 
 fn title(a: &[String]) {

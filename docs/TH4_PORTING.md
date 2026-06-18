@@ -292,10 +292,25 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Banking-cel order** — confirm MARI.BFT cel 1/2 = left/right (currently guessed).
 
 ### Graphics polish
+- **Bullet / shot / item sprites — DONE.** `MIKO16.BFT` (the 16×16 sheet of
+  bullets, the player's needle shot and the items — palette embedded, so true
+  colours) is loaded cel-by-cel into a `FxSheet` (`build_fx_sheet`); `draw_frame`
+  renders enemy/boss bullets via `bullet_cel(patnum)` (the ported `PAT_*` ids →
+  MIKO16 cels), player shots via `SHOT_CEL`, and dropped items via
+  `item_cel(kind)`, all falling back to the old markers if the sheet is missing.
+  Verified: Orange fires white balls, the player streams needle shots, stage
+  trash + items render true-to-colour. Limitations: directional knife/cross
+  types (Elly/Yuuka) fall back to a same-colour ball (bullet orientation isn't
+  tracked yet); MIKO32 big bullets / options aren't wired. Inspect any sheet
+  with `th04-game sheet <archive> <NAME.BFT> [out.png] [scale] [cols]`.
+- **Backgrounds already render in their real palettes** (MPN tiles carry their
+  own); the outstanding palette gap is the **CD2** boss art below.
 - **Real HUD font** — wire `GAMEFT.BFT` (1bpp ASCII font) for score/labels instead
-  of the built-in 3×5 digits; draw the original side-panel art.
-- **Boss/midboss sprites** — `BSS*.CD2` / `KAO*.CD2` (currently coloured markers).
-- **Bullet/shot sprites** — pellet + `PAT_BULLET16_*` sheets (currently markers).
+  of the built-in 5×7 font; draw the original side-panel art. (`GAMEFT.BFT` is
+  1bpp, so the 4bpp `Bft` path mangles it — needs a 1bpp decode branch.)
+- **Boss/midboss sprites** — `BSS*.CD2` / `KAO*.CD2` (still coloured markers).
+  Blocked on the **stage/boss palettes** (CD2 carries none; the real palettes
+  live in `MAIN.EXE` — needs RE). Boss orbs/rays/telegraph effects also markers.
 - **Tile-atlas linear-filter seams** — switch the atlas to nearest filtering if
   seams show when upscaled.
 
