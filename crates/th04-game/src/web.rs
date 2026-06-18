@@ -56,6 +56,6 @@ pub async fn start_game(files: js_sys::Object) {
     let _ = canvas.focus();
 
     let (engine, surface) = Engine::new_web(canvas.clone()).await;
-    let (textures, app) = setup_menu(&engine, &arc, "ST00.STD", title_img);
+    let (textures, app) = setup_menu(&engine, &arc, title_img);
     engine.run_game_web(canvas, surface, "Touhou 4 ~ Lotus Land Story", textures, make_menu_update(app));
 }

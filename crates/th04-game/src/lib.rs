@@ -88,23 +88,33 @@ fn load_player_sprite(engine: &Engine, arc: &Archive, name: &str, fallback: [u8;
     }
 }
 
-/// Build all stage textures + draw metadata + the parsed `Std`, without
-/// creating the sim (so the menu can defer that until a character is chosen).
-pub fn build_stage(engine: &Engine, arc: &Archive, std_name: &str) -> (Vec<Texture>, DrawData, Std) {
-    let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
-    let mut textures: Vec<Texture> = vec![white];
+/// A BFNT sprite sheet's cels appended to `textures`, registered in `cel_idx`
+/// at `base + cel` (the `PAT_*` numbering from `main_pat.h`).
+fn push_sheet(
+    engine: &Engine,
+    arc: &Archive,
+    name: &str,
+    base: u16,
+    cel_idx: &mut HashMap<u16, (usize, f32, f32)>,
+    textures: &mut Vec<Texture>,
+) {
+    if let Some(b) = arc.get(name).and_then(|d| Bft::parse(&d)) {
+        for n in 0..b.count {
+            if let Some(rgba) = b.decode_rgba(n, Some(0)) {
+                let idx = textures.len();
+                textures.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
+                cel_idx.insert(base + n as u16, (idx, b.width as f32, b.height as f32));
+            }
+        }
+    }
+}
 
-    // Both player characters, so the menu's character choice draws correctly.
-    let players = [
-        load_player_sprite(engine, arc, "MIKO.BFT", [255, 120, 120, 255], &mut textures), // Reimu
-        load_player_sprite(engine, arc, "MARI.BFT", [102, 179, 255, 255], &mut textures), // Marisa
-    ];
-
-    // Background tileset (MPN) + layout (MAP), packed into one atlas texture.
+/// A stage's background tileset (`.MPN`) packed into one atlas texture (per-tile
+/// textures = hundreds of draw calls, which made WebGL drop tiles / flicker).
+/// Returns `(atlas_index, atlas_w, atlas_h, ntiles)`.
+fn push_tile_atlas(engine: &Engine, arc: &Archive, std_name: &str, tile_cols: usize, textures: &mut Vec<Texture>) -> (usize, f32, f32, usize) {
     let mpn = arc.get(&std_name.replace(".STD", ".MPN")).and_then(|b| Mpn::parse(&b));
-    let map = arc.get(&std_name.replace(".STD", ".MAP")).and_then(|b| Map::parse(&b));
-    let tile_cols = 16usize;
-    let (tile_atlas, atlas_w, atlas_h, ntiles) = match &mpn {
+    match &mpn {
         Some(m) if m.count > 0 => {
             let rows = m.count.div_ceil(tile_cols);
             let (aw, ah) = (tile_cols * 16, rows * 16);
@@ -123,41 +133,66 @@ pub fn build_stage(engine: &Engine, arc: &Archive, std_name: &str) -> (Vec<Textu
             (idx, aw as f32, ah as f32, m.count)
         }
         _ => (0, 1.0, 1.0, 0),
-    };
-
-    // Sprite cels at their PAT_* bases (main_pat.h).
-    let mut cel_idx = HashMap::new();
-    let sheets = [
-        ("MIKOD.BFT".to_string(), 3u16),
-        ("MIKO32.BFT".to_string(), 4),
-        ("MIKO16.BFT".to_string(), 38),
-        (std_name.replace(".STD", ".BFT"), 128),
-    ];
-    for (name, base) in &sheets {
-        if let Some(b) = arc.get(name).and_then(|d| Bft::parse(&d)) {
-            for n in 0..b.count {
-                if let Some(rgba) = b.decode_rgba(n, Some(0)) {
-                    let idx = textures.len();
-                    textures.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
-                    cel_idx.insert(base + n as u16, (idx, b.width as f32, b.height as f32));
-                }
-            }
-        }
     }
+}
 
-    let std = Std::parse(&arc.get(std_name).unwrap_or_default()).expect("parse STD");
-    let section_order = std.map_section_order.clone();
-    let dd = DrawData {
-        players,
-        tile_atlas,
-        tile_cols,
-        atlas_w,
-        atlas_h,
-        ntiles,
-        cel_idx,
-        map,
-        section_order,
-    };
+/// Everything one stage needs to run + draw: its sim data and draw metadata.
+pub struct StageAssets {
+    pub dd: DrawData,
+    pub std: Std,
+    pub name: String,
+}
+
+/// Build one shared texture set covering all of `stage_names` at once. Shared
+/// textures (white, both player sprites, the global `MIKO*` sheets) are created
+/// once; each stage appends its own tile atlas + `ST0n.BFT` sheet. This lets the
+/// menu offer any stage (practice / multi-stage) even though the engine fixes
+/// the texture set up front. Returns the textures + per-stage assets in order.
+pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) -> (Vec<Texture>, Vec<StageAssets>) {
+    let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
+    let mut textures: Vec<Texture> = vec![white];
+
+    // Both player characters, so the menu's character choice draws correctly.
+    let players = [
+        load_player_sprite(engine, arc, "MIKO.BFT", [255, 120, 120, 255], &mut textures), // Reimu
+        load_player_sprite(engine, arc, "MARI.BFT", [102, 179, 255, 255], &mut textures), // Marisa
+    ];
+
+    // Global sprite sheets, shared by every stage (loaded once).
+    let mut shared_cels: HashMap<u16, (usize, f32, f32)> = HashMap::new();
+    push_sheet(engine, arc, "MIKOD.BFT", 3, &mut shared_cels, &mut textures);
+    push_sheet(engine, arc, "MIKO32.BFT", 4, &mut shared_cels, &mut textures);
+    push_sheet(engine, arc, "MIKO16.BFT", 38, &mut shared_cels, &mut textures);
+
+    let tile_cols = 16usize;
+    let mut stages = Vec::with_capacity(stage_names.len());
+    for &std_name in stage_names {
+        let (tile_atlas, atlas_w, atlas_h, ntiles) = push_tile_atlas(engine, arc, std_name, tile_cols, &mut textures);
+        let mut cel_idx = shared_cels.clone();
+        push_sheet(engine, arc, &std_name.replace(".STD", ".BFT"), 128, &mut cel_idx, &mut textures);
+        let map = arc.get(&std_name.replace(".STD", ".MAP")).and_then(|b| Map::parse(&b));
+        let std = Std::parse(&arc.get(std_name).unwrap_or_default()).expect("parse STD");
+        let section_order = std.map_section_order.clone();
+        let dd = DrawData {
+            players,
+            tile_atlas,
+            tile_cols,
+            atlas_w,
+            atlas_h,
+            ntiles,
+            cel_idx,
+            map,
+            section_order,
+        };
+        stages.push(StageAssets { dd, std, name: std_name.to_string() });
+    }
+    (textures, stages)
+}
+
+/// Build textures + draw metadata + the parsed `Std` for a single stage.
+pub fn build_stage(engine: &Engine, arc: &Archive, std_name: &str) -> (Vec<Texture>, DrawData, Std) {
+    let (textures, mut stages) = build_all_stages(engine, arc, &[std_name]);
+    let StageAssets { dd, std, .. } = stages.remove(0);
     (textures, dd, std)
 }
 
@@ -178,22 +213,26 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
     (textures, dd, sim)
 }
 
-/// Build the texture set + a [`menu::MenuApp`] for the title→menu→game flow.
-/// `title_img` is the decoded title art (RGBA, width, height) — typically
-/// `OP1.PI` from the `幻想郷ED.DAT` archive; pass `None` for a text-only title.
+/// The stages the menu offers, in order (`ST00` = stage 1 … `ST06` = Extra).
+pub const STAGE_NAMES: [&str; 7] = [
+    "ST00.STD", "ST01.STD", "ST02.STD", "ST03.STD", "ST04.STD", "ST05.STD", "ST06.STD",
+];
+
+/// Build the texture set (all stages preloaded) + a [`menu::MenuApp`] for the
+/// title→menu→game flow. `title_img` is the decoded title art (RGBA, width,
+/// height) — typically `OP1.PI` from `幻想郷ED.DAT`; `None` → a text-only title.
 pub fn setup_menu(
     engine: &Engine,
     arc: &Archive,
-    std_name: &str,
     title_img: Option<(Vec<u8>, u32, u32)>,
 ) -> (Vec<Texture>, menu::MenuApp) {
-    let (mut textures, dd, std) = build_stage(engine, arc, std_name);
+    let (mut textures, stages) = build_all_stages(engine, arc, &STAGE_NAMES);
     let title_tex = title_img.map(|(rgba, w, h)| {
         let idx = textures.len();
         textures.push(engine.create_texture(&rgba, w, h));
         (idx, w as f32, h as f32)
     });
-    let app = menu::MenuApp::new(dd, std, std_name.to_string(), title_tex);
+    let app = menu::MenuApp::new(stages, title_tex);
     (textures, app)
 }
 

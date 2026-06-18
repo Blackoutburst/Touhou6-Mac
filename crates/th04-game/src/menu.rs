@@ -2,36 +2,55 @@
 //! closure that runs the stage. Flow:
 //!
 //! ```text
-//! Title ──Z──▶ Main ──START──▶ Character ──▶ Shot ──▶ Rank ──▶ Playing
-//!                │                                                  │
-//!                └──QUIT──▶ exit                  clear / game over ─┘
-//!                                                       │
-//!                                                       ▼
-//!                                                     Title
+//! Title ─Z─▶ Main ─┬─START────▶ Char ▶ Shot ▶ Rank ─────────▶ Play (full run)
+//!                  ├─PRACTICE─▶ Char ▶ Shot ▶ Rank ▶ Stage ─▶ Play (one stage)
+//!                  ├─EXTRA────▶ Char ▶ Shot ▶ Rank ─────────▶ Play (ST06)
+//!                  └─QUIT─────▶ exit
+//!
+//! Play ─clear─▶ (full run: next stage, carrying score/lives) ─… last─▶ Result
+//!      ─miss out of lives─▶ Result ─Z─▶ Title
 //! ```
 //!
-//! Textures are fixed up front (the engine owns them for the whole loop), so the
-//! sim can't be built until the player has chosen a character — we keep the
-//! parsed [`Std`] around and clone it into a fresh [`StageSim`] on confirm.
+//! All stages' textures are fixed up front (the engine owns them for the whole
+//! loop — see [`crate::build_all_stages`]), so the menu can offer any stage and
+//! the sim is built on demand from the chosen stage's [`crate::StageAssets`].
 
 use th04_formats::sim::StageSim;
-use th04_formats::stage::Std;
 use th06_engine::{DrawCmd, Frame, Input, Key};
 
 use crate::font::{draw_text, draw_text_centered, text_width};
-use crate::{draw_frame, map_input, DrawData};
+use crate::{boss_for, draw_frame, map_input, StageAssets};
 
 const SCREEN_W: f32 = 640.0;
+/// `ST05` (stage 6) is the last stage of a full run; `ST06` is the Extra stage,
+/// only reachable via its own menu entry / practice.
+const LAST_NORMAL_STAGE: usize = 5;
 
-/// Main-menu entries. Only START and QUIT are wired; the rest are shown (so the
-/// real menu shape is visible) but disabled.
-const MAIN_ENTRIES: &[(&str, bool)] = &[
-    ("START", true),
-    ("EXTRA START", false),
-    ("PRACTICE START", false),
-    ("MUSIC ROOM", false),
-    ("OPTION", false),
-    ("QUIT", true),
+#[derive(Clone, Copy, PartialEq)]
+enum MainAction {
+    Start,
+    Practice,
+    Extra,
+    Disabled,
+    Quit,
+}
+
+/// What kind of run is being played (controls what happens after a stage clear).
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// Full game: clearing a stage advances to the next, carrying score/lives.
+    Full,
+    /// A single stage (practice / extra): clearing it ends the run.
+    Single,
+}
+
+const MAIN_ENTRIES: &[(&str, MainAction)] = &[
+    ("START", MainAction::Start),
+    ("PRACTICE START", MainAction::Practice),
+    ("EXTRA START", MainAction::Extra),
+    ("MUSIC ROOM", MainAction::Disabled),
+    ("OPTION", MainAction::Disabled),
+    ("QUIT", MainAction::Quit),
 ];
 
 const CHARACTERS: [&str; 2] = ["REIMU HAKUREI", "MARISA KIRISAME"];
@@ -44,37 +63,48 @@ enum Screen {
     Char(usize),
     Shot(usize),
     Rank(usize),
-    Playing(Box<StageSim>),
-    /// Post-stage splash; `cleared` picks the message, `t` counts it down.
-    Result { cleared: bool, t: u32 },
+    /// Practice stage picker (cursor over stages 1..=6, i.e. indices 0..=5).
+    StageSelect(usize),
+    Playing {
+        sim: Box<StageSim>,
+        stage: usize,
+        mode: Mode,
+    },
+    /// Post-run splash; `t` counts it down before returning to the title.
+    Result {
+        cleared: bool,
+        all_clear: bool,
+        score: i64,
+        t: u32,
+    },
 }
 
 pub struct MenuApp {
     screen: Screen,
-    dd: DrawData,
-    /// Stage-1 data, cloned into a new sim whenever a run starts.
-    std: Std,
-    std_name: String,
+    stages: Vec<StageAssets>,
     /// Title image: texture index + draw size (None → a text-only title).
     title_tex: Option<(usize, f32, f32)>,
-    // Selection carried across the character → shot → rank screens.
+    /// Which main-menu action opened the character→shot→rank sequence.
+    pending: MainAction,
+    // Selection carried across the character → shot → rank → stage screens.
     character: usize,
     shot: usize,
     rank: usize,
+    high_score: i64,
     blink: u32,
 }
 
 impl MenuApp {
-    pub fn new(dd: DrawData, std: Std, std_name: String, title_tex: Option<(usize, f32, f32)>) -> Self {
+    pub fn new(stages: Vec<StageAssets>, title_tex: Option<(usize, f32, f32)>) -> Self {
         MenuApp {
             screen: Screen::Title,
-            dd,
-            std,
-            std_name,
+            stages,
             title_tex,
+            pending: MainAction::Start,
             character: 0,
             shot: 0,
             rank: 1, // default Normal
+            high_score: 0,
             blink: 0,
         }
     }
@@ -83,11 +113,25 @@ impl MenuApp {
         (self.character as u8) * 2 + self.shot as u8
     }
 
-    fn start_run(&mut self) {
+    /// Build a fresh sim for `stage` with the current character selection.
+    fn build_sim(&self, stage: usize) -> StageSim {
+        let a = &self.stages[stage];
         let shot_type = self.shot_type();
-        let boss = crate::boss_for(&self.std_name, shot_type);
-        let sim = StageSim::new(self.std.clone(), shot_type, boss);
-        self.screen = Screen::Playing(Box::new(sim));
+        StageSim::new(a.std.clone(), shot_type, boss_for(&a.name, shot_type))
+    }
+
+    /// Begin a run at `stage` in `mode`.
+    fn start(&self, stage: usize, mode: Mode) -> Screen {
+        Screen::Playing { sim: Box::new(self.build_sim(stage)), stage, mode }
+    }
+
+    /// What to do once the player confirms difficulty, based on `pending`.
+    fn after_rank(&self) -> Screen {
+        match self.pending {
+            MainAction::Practice => Screen::StageSelect(0),
+            MainAction::Extra => self.start(6, Mode::Single), // ST06
+            _ => self.start(0, Mode::Full),                   // START
+        }
     }
 
     /// Advance one frame; returns the frame to draw (and whether to quit).
@@ -101,126 +145,151 @@ impl MenuApp {
         let mut quit = false;
         let mut cmds = Vec::new();
 
-        match &mut self.screen {
+        // Own the current screen so we can freely call &self/&mut self helpers
+        // and reassign the next screen without borrow conflicts.
+        let screen = std::mem::replace(&mut self.screen, Screen::Title);
+        self.screen = match screen {
             Screen::Title => {
                 self.draw_backdrop(&mut cmds, false);
                 if (self.blink / 30) % 2 == 0 {
-                    draw_text_centered(&mut cmds, SCREEN_W / 2.0, 430.0, "PRESS Z", 4.0, [1.0; 4]);
+                    draw_text_centered(&mut cmds, SCREEN_W / 2.0, 420.0, "PRESS Z", 4.0, [1.0; 4]);
                 }
+                self.draw_hiscore(&mut cmds, 458.0);
                 if confirm {
-                    self.screen = Screen::Main(0);
-                } else if back {
-                    quit = true;
+                    Screen::Main(0)
+                } else {
+                    quit = back;
+                    Screen::Title
                 }
             }
             Screen::Main(cursor) => {
-                if up && *cursor > 0 {
-                    *cursor -= 1;
-                }
-                if down && *cursor + 1 < MAIN_ENTRIES.len() {
-                    *cursor += 1;
-                }
-                let cur = *cursor;
+                let cursor = step_cursor(cursor, MAIN_ENTRIES.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_menu_list(&mut cmds, 220.0, &MAIN_ENTRIES.iter().map(|(s, e)| (*s, *e)).collect::<Vec<_>>(), cur);
+                self.draw_hiscore(&mut cmds, 30.0);
+                let entries: Vec<(&str, bool)> =
+                    MAIN_ENTRIES.iter().map(|(s, a)| (*s, *a != MainAction::Disabled)).collect();
+                draw_menu_list(&mut cmds, 210.0, &entries, cursor);
                 if confirm {
-                    match MAIN_ENTRIES[cur] {
-                        ("START", _) => self.screen = Screen::Char(self.character),
-                        ("QUIT", _) => quit = true,
-                        _ => {} // disabled entry: no-op
+                    match MAIN_ENTRIES[cursor].1 {
+                        MainAction::Quit => {
+                            quit = true;
+                            Screen::Main(cursor)
+                        }
+                        MainAction::Disabled => Screen::Main(cursor),
+                        action => {
+                            self.pending = action;
+                            Screen::Char(self.character)
+                        }
                     }
                 } else if back {
-                    self.screen = Screen::Title;
+                    Screen::Title
+                } else {
+                    Screen::Main(cursor)
                 }
             }
             Screen::Char(cursor) => {
-                if up && *cursor > 0 {
-                    *cursor -= 1;
-                }
-                if down && *cursor + 1 < CHARACTERS.len() {
-                    *cursor += 1;
-                }
-                let cur = *cursor;
+                let cursor = step_cursor(cursor, CHARACTERS.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_title_label(&mut cmds, "SELECT CHARACTER");
-                let entries: Vec<(&str, bool)> = CHARACTERS.iter().map(|s| (*s, true)).collect();
-                draw_menu_list(&mut cmds, 240.0, &entries, cur);
+                draw_heading(&mut cmds, "SELECT CHARACTER");
+                draw_menu_list(&mut cmds, 240.0, &labels(&CHARACTERS), cursor);
                 if confirm {
-                    self.character = cur;
-                    self.screen = Screen::Shot(self.shot);
+                    self.character = cursor;
+                    Screen::Shot(self.shot)
                 } else if back {
-                    self.screen = Screen::Main(0);
+                    Screen::Main(0)
+                } else {
+                    Screen::Char(cursor)
                 }
             }
             Screen::Shot(cursor) => {
-                if up && *cursor > 0 {
-                    *cursor -= 1;
-                }
-                if down && *cursor + 1 < SHOTS.len() {
-                    *cursor += 1;
-                }
-                let cur = *cursor;
+                let cursor = step_cursor(cursor, SHOTS.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_title_label(&mut cmds, "SELECT SHOT TYPE");
-                let entries: Vec<(&str, bool)> = SHOTS.iter().map(|s| (*s, true)).collect();
-                draw_menu_list(&mut cmds, 240.0, &entries, cur);
+                draw_heading(&mut cmds, "SELECT SHOT TYPE");
+                draw_menu_list(&mut cmds, 240.0, &labels(&SHOTS), cursor);
                 if confirm {
-                    self.shot = cur;
-                    self.screen = Screen::Rank(self.rank);
+                    self.shot = cursor;
+                    Screen::Rank(self.rank)
                 } else if back {
-                    self.screen = Screen::Char(self.character);
+                    Screen::Char(self.character)
+                } else {
+                    Screen::Shot(cursor)
                 }
             }
             Screen::Rank(cursor) => {
-                if up && *cursor > 0 {
-                    *cursor -= 1;
-                }
-                if down && *cursor + 1 < RANKS.len() {
-                    *cursor += 1;
-                }
-                let cur = *cursor;
+                let cursor = step_cursor(cursor, RANKS.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_title_label(&mut cmds, "SELECT DIFFICULTY");
-                let entries: Vec<(&str, bool)> = RANKS.iter().map(|s| (*s, true)).collect();
-                draw_menu_list(&mut cmds, 220.0, &entries, cur);
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 380.0, "PATTERNS ARE NORMAL RANK", 2.0, [0.6, 0.6, 0.7, 1.0]);
+                draw_heading(&mut cmds, "SELECT DIFFICULTY");
+                draw_menu_list(&mut cmds, 210.0, &labels(&RANKS), cursor);
+                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 396.0, "PATTERNS ARE NORMAL RANK", 2.0, [0.6, 0.6, 0.7, 1.0]);
                 if confirm {
-                    self.rank = cur;
-                    self.start_run();
+                    self.rank = cursor;
+                    self.after_rank()
                 } else if back {
-                    self.screen = Screen::Shot(self.shot);
+                    Screen::Shot(self.shot)
+                } else {
+                    Screen::Rank(cursor)
                 }
             }
-            Screen::Playing(sim) => {
+            Screen::StageSelect(cursor) => {
+                let cursor = step_cursor(cursor, LAST_NORMAL_STAGE + 1, up, down);
+                self.draw_backdrop(&mut cmds, true);
+                draw_heading(&mut cmds, "SELECT STAGE");
+                let names: Vec<String> = (0..=LAST_NORMAL_STAGE).map(|i| format!("STAGE {}", i + 1)).collect();
+                let entries: Vec<(&str, bool)> = names.iter().map(|s| (s.as_str(), true)).collect();
+                draw_menu_list(&mut cmds, 150.0, &entries, cursor);
+                if confirm {
+                    self.start(cursor, Mode::Single)
+                } else if back {
+                    Screen::Rank(self.rank)
+                } else {
+                    Screen::StageSelect(cursor)
+                }
+            }
+            Screen::Playing { mut sim, stage, mode } => {
                 if back {
-                    // Abandon the run.
-                    self.screen = Screen::Title;
+                    Screen::Title // abandon the run
                 } else {
                     sim.step(&map_input(inp));
-                    cmds = draw_frame(sim, &self.dd);
-                    if sim.finished() {
-                        let cleared = !sim.player.gameover;
-                        self.screen = Screen::Result { cleared, t: 0 };
+                    cmds = draw_frame(&sim, &self.stages[stage].dd);
+                    if !sim.finished() {
+                        Screen::Playing { sim, stage, mode }
+                    } else {
+                        self.high_score = self.high_score.max(sim.score);
+                        if sim.player.gameover {
+                            Screen::Result { cleared: false, all_clear: false, score: sim.score, t: 0 }
+                        } else if mode == Mode::Full && stage < LAST_NORMAL_STAGE {
+                            // Advance to the next stage, carrying the run state.
+                            let next = stage + 1;
+                            let mut ns = self.build_sim(next);
+                            ns.restore(sim.player.lives, sim.player.bombs, sim.player.power, sim.score, sim.extends_awarded);
+                            Screen::Playing { sim: Box::new(ns), stage: next, mode }
+                        } else {
+                            let all_clear = mode == Mode::Full;
+                            Screen::Result { cleared: true, all_clear, score: sim.score, t: 0 }
+                        }
                     }
                 }
             }
-            Screen::Result { cleared, t } => {
-                *t += 1;
-                let cleared = *cleared;
-                let done = *t > 240;
+            Screen::Result { cleared, all_clear, score, t } => {
                 self.draw_backdrop(&mut cmds, true);
-                let (msg, col) = if cleared {
+                let (msg, col) = if all_clear {
+                    ("ALL CLEAR", [1.0, 0.9, 0.4, 1.0])
+                } else if cleared {
                     ("STAGE CLEAR", [0.6, 1.0, 0.7, 1.0])
                 } else {
                     ("GAME OVER", [1.0, 0.5, 0.5, 1.0])
                 };
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 200.0, msg, 6.0, col);
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 300.0, "PRESS Z", 3.0, [0.8; 4]);
-                if confirm || back || done {
-                    self.screen = Screen::Title;
+                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 170.0, msg, 6.0, col);
+                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 260.0, &format!("SCORE {}", score), 3.0, [1.0; 4]);
+                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 300.0, &format!("HI-SCORE {}", self.high_score), 3.0, [0.9, 0.9, 0.6, 1.0]);
+                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 360.0, "PRESS Z", 3.0, [0.8; 4]);
+                if confirm || back || t > 600 {
+                    Screen::Title
+                } else {
+                    Screen::Result { cleared, all_clear, score, t: t + 1 }
                 }
             }
-        }
+        };
 
         Frame { cmds, bg: None, quit }
     }
@@ -243,6 +312,27 @@ impl MenuApp {
             cmds.push(fill(0.0, 0.0, SCREEN_W, 480.0, [0.0, 0.0, 0.05, 0.55]));
         }
     }
+
+    fn draw_hiscore(&self, cmds: &mut Vec<DrawCmd>, y: f32) {
+        draw_text_centered(cmds, SCREEN_W / 2.0, y, &format!("HI-SCORE {}", self.high_score), 2.0, [0.9, 0.9, 0.6, 1.0]);
+    }
+}
+
+/// Move a wrapping-free cursor by the pressed direction.
+fn step_cursor(cursor: usize, len: usize, up: bool, down: bool) -> usize {
+    let mut c = cursor.min(len.saturating_sub(1));
+    if up && c > 0 {
+        c -= 1;
+    }
+    if down && c + 1 < len {
+        c += 1;
+    }
+    c
+}
+
+/// Turn a slice of labels into `(label, enabled=true)` entries.
+fn labels<'a>(items: &'a [&'a str]) -> Vec<(&'a str, bool)> {
+    items.iter().map(|s| (*s, true)).collect()
 }
 
 /// Solid quad on the white texture (absolute screen coords).
@@ -250,16 +340,16 @@ fn fill(x: f32, y: f32, w: f32, h: f32, tint: [f32; 4]) -> DrawCmd {
     DrawCmd { tex: 0, dst: [x, y, w, h], src: [0.0, 0.0, 1.0, 1.0], tint, rot: 0.0 }
 }
 
-/// A small section heading near the top of a selection screen.
-fn draw_title_label(cmds: &mut Vec<DrawCmd>, label: &str) {
-    draw_text_centered(cmds, SCREEN_W / 2.0, 110.0, label, 4.0, [1.0, 0.95, 0.7, 1.0]);
+/// A section heading near the top of a selection screen.
+fn draw_heading(cmds: &mut Vec<DrawCmd>, label: &str) {
+    draw_text_centered(cmds, SCREEN_W / 2.0, 100.0, label, 4.0, [1.0, 0.95, 0.7, 1.0]);
 }
 
 /// A vertical list of entries centred on-screen, the cursor row highlighted.
 /// Disabled entries (`enabled == false`) are dimmed.
 fn draw_menu_list(cmds: &mut Vec<DrawCmd>, top: f32, entries: &[(&str, bool)], cursor: usize) {
     let px = 4.0;
-    let row_h = 44.0;
+    let row_h = 42.0;
     for (i, (label, enabled)) in entries.iter().enumerate() {
         let y = top + i as f32 * row_h;
         let selected = i == cursor;

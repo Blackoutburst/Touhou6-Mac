@@ -307,18 +307,30 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Dialogue** — `.TXT` (scrambled Shift-JIS) + the dialog system.
 - **Music** — `.M26`/`.M86` PMD songs (YM2203/YM2608); needs an FM synth core or
   pre-rendered audio, then wire into `th06-engine`'s audio.
-- **Title/menu — DONE (first pass).** `menu.rs` is a state machine driven by the
-  same 60 Hz update closure: title (real `OP1.PI` art from `幻想郷ED.DAT`) → main
-  menu → character select (Reimu/Marisa) → shot type (A/B) → difficulty → play →
-  result splash → back to title. Selections build the `StageSim` on confirm
-  (`Std` is `Clone`d, character → `shot_type` → player sprite + stage-4 rival).
-  Both player sprites preload (`MARI.BFT`/`MIKO.BFT`). A built-in 5×7 font
-  (`font.rs`) renders the text (the authentic `GAMEFT.BFT` is still a TODO).
-  Entry points: `th04-game menu <archive>` (windowed) and the WASM build (which
-  also drops into the menu); offscreen check: `th04-game menushot <archive>`.
-  Main-menu entries beyond START/QUIT are shown but disabled (single-stage
-  textures load up front). **Still TODO: scoring/extends, replays, in-menu
-  multi-stage/practice selection, the real font.**
+- **Title/menu — DONE.** `menu.rs` is a state machine driven by the same 60 Hz
+  update closure: title (real `OP1.PI` art from `幻想郷ED.DAT`, with the session
+  hi-score) → main menu → character (Reimu/Marisa) → shot type (A/B) → difficulty
+  → play → result (`STAGE CLEAR` / `ALL CLEAR` / `GAME OVER` + score & hi-score)
+  → title. Selections build the `StageSim` on confirm (`Std` is `Clone`d,
+  character → `shot_type` → player sprite + stage-4 rival). Both player sprites
+  preload (`MARI.BFT`/`MIKO.BFT`). A built-in 5×7 font (`font.rs`) renders the
+  text (the authentic `GAMEFT.BFT` is still a TODO).
+  - **All stages preload** ([`build_all_stages`]): one shared texture set covers
+    every stage's tiles + sprites up front (the engine fixes textures for the
+    whole loop), so the menu can launch any stage.
+  - **START** plays the full game — clearing a stage advances to the next,
+    carrying score / lives / bombs / power (`StageSim::restore`) — through stage 6
+    to `ALL CLEAR`. **PRACTICE START** → a stage picker (stages 1–6). **EXTRA
+    START** → `ST06`. `MUSIC ROOM` / `OPTION` are shown but disabled.
+  - **Scoring / extends:** score accumulates across chained stages; extra lives
+    are granted at `EXTEND_SCORES` milestones (`StageSim::award_extends`; the
+    exact ReC98 thresholds are a TODO — current values are tuned to this port's
+    simplified scoring). A session hi-score is shown on the title/menu/result.
+  - Entry points: `th04-game menu <archive>` (windowed) and the WASM build (which
+    also opens on the menu); offscreen check: `th04-game menushot <archive>`.
+  - **Still TODO: replays** (deprioritized), per-stage progress save, the real
+    font, the `OPTION`/config screen, and the difficulty actually changing
+    bullet counts (patterns are Normal-rank only).
 
 ### Build / infra
 - WASM bundle built locally to `web/pkg-th04/` (gitignored). `wasm-pack` is

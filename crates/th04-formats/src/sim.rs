@@ -27,6 +27,11 @@ const ENEMY_POS_RANDOM: i32 = 999 * SUBPIXEL;
 
 const SUBPIXEL: i32 = 16;
 const SCROLL_DY: i32 = 16; // 1px/frame placeholder
+/// Score milestones that each grant one extra life (an "extend"). The exact
+/// TH04 thresholds live in `MAIN.EXE`/the config; these are placeholders tuned
+/// to this port's (still-simplified) scoring scale, applied cumulatively across
+/// chained stages. TODO: replace with the ReC98 values once located.
+const EXTEND_SCORES: &[i64] = &[10_000, 30_000, 70_000, 150_000, 300_000];
 // Approximate hit half-extents.
 const ENEMY_HIT: i32 = 16 * SUBPIXEL;
 const BULLET_KILL: i32 = 6 * SUBPIXEL;
@@ -72,6 +77,8 @@ pub struct StageSim {
     pub effects: EffectPool,
     /// Which boss spawns at the boss phase (`None` = no roster boss, e.g. Extra).
     boss_kind: Option<BossKind>,
+    /// How many [`EXTEND_SCORES`] milestones have already granted a life.
+    pub extends_awarded: usize,
     midboss_done: bool,
     rng: u32,
 }
@@ -99,8 +106,31 @@ impl StageSim {
             items: Vec::new(),
             effects: EffectPool::new(),
             boss_kind,
+            extends_awarded: 0,
             midboss_done: false,
             rng: 0x9e37_79b9,
+        }
+    }
+
+    /// Carry a continuing run's state into this (freshly built) stage: the
+    /// player's lives/bombs/power, the accumulated score, and how many extends
+    /// have been awarded (so milestones aren't re-granted next stage).
+    pub fn restore(&mut self, lives: i32, bombs: i32, power: u8, score: i64, extends_awarded: usize) {
+        self.player.lives = lives;
+        self.player.bombs = bombs;
+        self.player.power = power;
+        self.score = score;
+        self.extends_awarded = extends_awarded;
+    }
+
+    /// Award an extra life for each [`EXTEND_SCORES`] milestone the score has
+    /// reached since the last check.
+    fn award_extends(&mut self) {
+        while self.extends_awarded < EXTEND_SCORES.len()
+            && self.score >= EXTEND_SCORES[self.extends_awarded]
+        {
+            self.player.lives += 1;
+            self.extends_awarded += 1;
         }
     }
 
@@ -369,6 +399,9 @@ impl StageSim {
             self.phase = Phase::Cleared;
         }
 
+        // Extra lives for score milestones reached this frame.
+        self.award_extends();
+
         self.frame = self.frame.wrapping_add(1);
     }
 }
@@ -433,6 +466,31 @@ mod tests {
         }
         assert_eq!(sim.phase, Phase::Boss, "should reach the boss phase");
         assert!(sim.boss.is_some(), "the selected boss should spawn");
+    }
+
+    #[test]
+    fn score_milestone_grants_an_extend() {
+        let mut sim = StageSim::new(tiny_stage(), 0, None);
+        let lives0 = sim.player.lives;
+        // Cross the first extend threshold directly.
+        sim.score = EXTEND_SCORES[0];
+        sim.award_extends();
+        assert_eq!(sim.player.lives, lives0 + 1);
+        assert_eq!(sim.extends_awarded, 1);
+        // No double-award while still below the next milestone.
+        sim.award_extends();
+        assert_eq!(sim.player.lives, lives0 + 1);
+    }
+
+    #[test]
+    fn restore_carries_progress_without_regranting_extends() {
+        let mut sim = StageSim::new(tiny_stage(), 0, None);
+        sim.restore(5, 2, 64, EXTEND_SCORES[0] + 1, 1);
+        sim.award_extends();
+        // Already-awarded milestone must not grant another life.
+        assert_eq!(sim.player.lives, 5);
+        assert_eq!(sim.player.power, 64);
+        assert_eq!(sim.score, EXTEND_SCORES[0] + 1);
     }
 
     #[test]

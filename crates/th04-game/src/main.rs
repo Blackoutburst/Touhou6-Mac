@@ -55,16 +55,16 @@ fn load_title_image(main_path: &str, main_arc: &Archive) -> Option<(Vec<u8>, u32
 fn menu(a: &[String]) {
     let path = a.first().expect("usage: th04-game menu <archive>");
     let arc = read_archive(path);
-    let std_name = a.get(1).map(String::as_str).unwrap_or("ST00.STD");
     let title_img = load_title_image(path, &arc);
     let engine = Engine::new();
-    let (textures, app) = setup_menu(&engine, &arc, std_name, title_img);
+    let (textures, app) = setup_menu(&engine, &arc, title_img);
     engine.run_game("Touhou 4 ~ Lotus Land Story", textures, make_menu_update(app));
 }
 
 /// Offscreen verification of the menu: drive it with synthetic key presses
-/// through title → main → character → shot → rank → playing, saving a PNG of
-/// each screen. `th04-game menushot <archive> [out_prefix]`.
+/// through the title, main menu, the practice path (character → shot → rank →
+/// stage select) and into a non-stage-1 stage, saving a PNG of each screen.
+/// `th04-game menushot <archive> [out_prefix]`.
 fn menushot(a: &[String]) {
     use th06_engine::{Input as EInput, Key};
     let path = a.first().expect("usage: th04-game menushot <archive> [prefix]");
@@ -72,10 +72,11 @@ fn menushot(a: &[String]) {
     let arc = read_archive(path);
     let title_img = load_title_image(path, &arc);
     let engine = Engine::new();
-    let (textures, app) = setup_menu(&engine, &arc, "ST00.STD", title_img);
+    let (textures, app) = setup_menu(&engine, &arc, title_img);
     let texes: Vec<&th06_engine::Texture> = textures.iter().collect();
     let mut update = make_menu_update(app);
     let none = EInput::default();
+    let press = |k: Key| EInput::synthetic(&[], &[k]);
     let enter = || EInput::synthetic(&[], &[Key::Shoot]);
 
     let save = |frame: &th06_engine::Frame, engine: &Engine, name: &str| {
@@ -84,26 +85,29 @@ fn menushot(a: &[String]) {
         println!("wrote {}", name);
     };
 
-    // Title.
-    let f = update(&none);
-    save(&f, &engine, &format!("{prefix}_0title.png"));
-    // → Main, → Character, → Shot, → Rank.
+    // Title → Main (now showing the enabled PRACTICE/EXTRA entries).
+    save(&update(&none), &engine, &format!("{prefix}_0title.png"));
     update(&enter());
     save(&update(&none), &engine, &format!("{prefix}_1main.png"));
+    // Pick PRACTICE START (one down), then Character / Shot / Rank.
+    update(&press(Key::Down));
     update(&enter());
     save(&update(&none), &engine, &format!("{prefix}_2char.png"));
     update(&enter());
     save(&update(&none), &engine, &format!("{prefix}_3shot.png"));
     update(&enter());
     save(&update(&none), &engine, &format!("{prefix}_4rank.png"));
-    // → start the run; shoot for a while so danmaku is visible (player stays
-    // near its spawn so its sprite is clearly visible).
+    // → Stage select; pick stage 3 (two downs) to prove non-stage-1 textures.
+    update(&enter());
+    save(&update(&none), &engine, &format!("{prefix}_5stage.png"));
+    update(&press(Key::Down));
+    update(&press(Key::Down));
     update(&enter());
     let mut f = update(&none);
     for _ in 0..120 {
         f = update(&EInput::synthetic(&[Key::Shoot], &[]));
     }
-    save(&f, &engine, &format!("{prefix}_5play.png"));
+    save(&f, &engine, &format!("{prefix}_6play.png"));
 }
 
 fn title(a: &[String]) {
