@@ -41,7 +41,7 @@ pub const BOSS_HIT: i32 = 24 * SUBPIXEL;
 const BOSS_DEFEAT_FRAMES: u32 = 120;
 
 /// Which boss this is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BossKind {
     /// Stage 1 — Orange (`@orange_update$qv`).
     Orange,
@@ -279,6 +279,11 @@ impl Boss {
             BossKind::Yuuka => Self::yuuka(),
             BossKind::Yuuka6 => Self::yuuka6(),
         }
+    }
+
+    /// Which boss this is (for sprite/HUD lookup).
+    pub fn kind(&self) -> BossKind {
+        self.kind
     }
 
     /// True once the defeat animation has finished (stage may advance).

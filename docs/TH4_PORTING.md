@@ -303,14 +303,27 @@ Midboss 1 at frame 2400 regardless of stage).
   types (Elly/Yuuka) fall back to a same-colour ball (bullet orientation isn't
   tracked yet); MIKO32 big bullets / options aren't wired. Inspect any sheet
   with `th04-game sheet <archive> <NAME.BFT> [out.png] [scale] [cols]`.
-- **Backgrounds already render in their real palettes** (MPN tiles carry their
-  own); the outstanding palette gap is the **CD2** boss art below.
+- **Backgrounds + boss palettes — SOLVED (no `MAIN.EXE` RE needed).** MPN tiles
+  carry their own palette, and the PC-98 playfield shares one 16-colour palette,
+  so the **boss `CD2` sprites decode correctly with their stage's `.MPN`
+  palette** — verified: Orange is red-haired/green-dress with `ST00.MPN`, garish
+  with `EYE.RGB`. (The doc's old "palettes live in MAIN.EXE" worry was moot — the
+  MPN palette *is* the playfield palette.)
+- **Boss sprites — DONE.** `build_boss_sprites` decodes each stage boss from
+  `BSS*.CD2` with its stage `.MPN` palette into `DrawData::boss_sprites`;
+  `draw_frame` draws `sim.boss` by `Boss::kind()`, marker fallback. Mapping:
+  Orange→BSS0, Kurumi→BSS1, Elly→BSS2, Yuuka→BSS5(ST04), Yuuka6→BSS5(ST05); the
+  stage-4 rival reuses the player sheet (Reimu=`MIKO.BFT`, Marisa=`MARI.BFT`,
+  2×). Verified in-engine for all. Inspect any CD2 with
+  `th04-game cd2 <archive> <NAME.CD2> <PAL.MPN|.RGB> [out.png]`.
 - **Real HUD font** — wire `GAMEFT.BFT` (1bpp ASCII font) for score/labels instead
   of the built-in 5×7 font; draw the original side-panel art. (`GAMEFT.BFT` is
   1bpp, so the 4bpp `Bft` path mangles it — needs a 1bpp decode branch.)
-- **Boss/midboss sprites** — `BSS*.CD2` / `KAO*.CD2` (still coloured markers).
-  Blocked on the **stage/boss palettes** (CD2 carries none; the real palettes
-  live in `MAIN.EXE` — needs RE). Boss orbs/rays/telegraph effects also markers.
+- **Still markers:** the **midboss** body (its `BSS*`/portrait isn't identified
+  yet — `BSS4`/`6`/`7`/`8` look like midbosses/alts), boss **orbs/rays** (Reimu
+  orbs / Marisa bits / Kurumi spawn-rays), and the **telegraph effects**.
+  Boss **portraits** (`KAO*.CD2`, decode fine with the stage palette) are unused
+  pending the dialogue system.
 - **Tile-atlas linear-filter seams** — switch the atlas to nearest filtering if
   seams show when upscaled.
 

@@ -25,6 +25,7 @@ fn main() {
         Some("menu") => menu(&args[1..]),
         Some("menushot") => menushot(&args[1..]),
         Some("sheet") => sheet(&args[1..]),
+        Some("cd2") => cd2(&args[1..]),
         Some("play") => play(&args[1..]),
         Some("stage") => stage(&args[1..]),
         _ => title(&args[1..]),
@@ -170,6 +171,47 @@ fn sheet(a: &[String]) {
     };
     image::save_buffer(&out, &fimg, fw as u32, fh as u32, image::ColorType::Rgba8).expect("save");
     println!("{}: {} cels {}x{} (start {}) -> {} ({}x)", name, b.count, b.width, b.height, b.start, out, scale);
+}
+
+/// Dump a `.CD2`/`.CDG` image (all frames) using a chosen palette source
+/// (an `.MPN` stage palette or an `.RGB` file) to a PNG, so we can see whether
+/// the stage palette renders the boss sprites correctly.
+/// `th04-game cd2 <archive> <NAME.CD2> <PAL.MPN|PAL.RGB> [out.png]`.
+fn cd2(a: &[String]) {
+    use th04_formats::cdg::{parse_palette, Cdg, PALETTE_LEN};
+    use th04_formats::mpn::Mpn;
+    let arc = read_archive(a.first().expect("usage: th04-game cd2 <archive> <NAME.CD2> <PAL> [out.png]"));
+    let name = a.get(1).expect("cd2 name");
+    let pal_src = a.get(2).expect("palette source (.MPN or .RGB)");
+    let out = a.get(3).cloned().unwrap_or_else(|| "cd2.png".into());
+    let cd = arc.get(name).and_then(|d| Cdg::parse(&d)).expect("parse CD2");
+    let pal: [[u8; 3]; PALETTE_LEN] = if pal_src.to_uppercase().ends_with(".MPN") {
+        arc.get(pal_src).and_then(|d| Mpn::parse(&d)).expect("parse MPN").palette
+    } else {
+        parse_palette(&arc.get(pal_src).expect("read palette"))
+    };
+    let (w, h, n) = (cd.width, cd.height, cd.image_count);
+    let (iw, ih) = ((w + 2) * n.min(8).max(1), (h + 2) * n.div_ceil(8));
+    let mut img = vec![255u8; iw * ih * 4];
+    for p in img.chunks_exact_mut(4) {
+        p.copy_from_slice(&[255, 0, 255, 255]);
+    }
+    for i in 0..n {
+        let Some(rgba) = cd.decode_rgba(i, &pal) else { continue };
+        let (ox, oy) = ((i % 8) * (w + 2) + 1, (i / 8) * (h + 2) + 1);
+        for y in 0..h {
+            for x in 0..w {
+                let s = (y * w + x) * 4;
+                if rgba[s + 3] == 0 {
+                    continue;
+                }
+                let d = ((oy + y) * iw + ox + x) * 4;
+                img[d..d + 4].copy_from_slice(&rgba[s..s + 4]);
+            }
+        }
+    }
+    image::save_buffer(&out, &img, iw as u32, ih as u32, image::ColorType::Rgba8).expect("save");
+    println!("{}: {} imgs {}x{} (pal {}) -> {}", name, n, w, h, pal_src, out);
 }
 
 fn title(a: &[String]) {

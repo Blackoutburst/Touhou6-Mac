@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use th04_formats::bft::Bft;
 use th04_formats::boss::BossKind;
+use th04_formats::cdg::Cdg;
 use th04_formats::effects::EffectKind;
 use th04_formats::map::{self, Map};
 use th04_formats::mpn::Mpn;
@@ -59,6 +60,10 @@ pub struct DrawData {
     players: [PlayerSprite; 2],
     /// Bullets / shots / items sheet (`MIKO16.BFT`).
     fx: FxSheet,
+    /// Boss body sprites by kind: texture index + display size. `BSS*.CD2`
+    /// decoded with the boss's stage `.MPN` palette; rivals reuse the player
+    /// sheet. Empty entry → fall back to a coloured marker.
+    boss_sprites: HashMap<BossKind, (usize, f32, f32)>,
     /// Background tiles are packed into one atlas texture so the whole
     /// background draws in a single batch (per-tile textures = hundreds of
     /// draw calls, which made WebGL drop tiles / flicker).
@@ -140,6 +145,45 @@ fn build_fx_sheet(engine: &Engine, arc: &Archive, textures: &mut Vec<Texture>) -
         }
     }
     FxSheet { cels }
+}
+
+/// Decode each boss's body sprite. The stage bosses come from `BSS*.CD2`, which
+/// carries no palette — but the playfield shares one palette, so decoding with
+/// the boss's stage `.MPN` palette yields the right colours (verified: Orange
+/// renders red-haired/green-dress with `ST00.MPN`, garish with `EYE.RGB`). The
+/// stage-4 rival reuses the player sheet (`MIKO`/`MARI.BFT`).
+fn build_boss_sprites(
+    engine: &Engine,
+    arc: &Archive,
+    players: &[PlayerSprite; 2],
+    textures: &mut Vec<Texture>,
+) -> HashMap<BossKind, (usize, f32, f32)> {
+    use th04_formats::mpn::Mpn;
+    let mut map = HashMap::new();
+    // (kind, BSS file, the .MPN whose palette to decode it with).
+    let table = [
+        (BossKind::Orange, "BSS0.CD2", "ST00.MPN"),
+        (BossKind::Kurumi, "BSS1.CD2", "ST01.MPN"),
+        (BossKind::Elly, "BSS2.CD2", "ST02.MPN"),
+        (BossKind::Yuuka, "BSS5.CD2", "ST04.MPN"),
+        (BossKind::Yuuka6, "BSS5.CD2", "ST05.MPN"),
+    ];
+    for (kind, bss, mpn_name) in table {
+        let Some(cd) = arc.get(bss).and_then(|d| Cdg::parse(&d)) else { continue };
+        let Some(pal) = arc.get(mpn_name).and_then(|d| Mpn::parse(&d)).map(|m| m.palette) else { continue };
+        if let Some(rgba) = cd.decode_rgba(0, &pal) {
+            let idx = textures.len();
+            textures.push(engine.create_texture(&rgba, cd.width as u32, cd.height as u32));
+            map.insert(kind, (idx, cd.width as f32, cd.height as f32));
+        }
+    }
+    // Rival (stage 4) reuses the player character sheets, drawn boss-sized.
+    let scale = 2.0;
+    let r = &players[0];
+    map.insert(BossKind::Reimu, (r.base, r.wh.0 * scale, r.wh.1 * scale));
+    let m = &players[1];
+    map.insert(BossKind::Marisa, (m.base, m.wh.0 * scale, m.wh.1 * scale));
+    map
 }
 
 /// Map a bullet's type (`patnum`, the ported `PAT_*` ids) to a `MIKO16` cel.
@@ -231,6 +275,10 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
     // Bullets / shots / items, indexed directly by MIKO16 cel number.
     let fx = build_fx_sheet(engine, arc, &mut textures);
 
+    // Boss body sprites (BSS*.CD2 with each boss's stage palette; rivals reuse
+    // the player sheets).
+    let boss_sprites = build_boss_sprites(engine, arc, &players, &mut textures);
+
     let tile_cols = 16usize;
     let mut stages = Vec::with_capacity(stage_names.len());
     for &std_name in stage_names {
@@ -243,6 +291,7 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
         let dd = DrawData {
             players,
             fx: fx.clone(),
+            boss_sprites: boss_sprites.clone(),
             tile_atlas,
             tile_cols,
             atlas_w,
@@ -427,7 +476,12 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
             for o in b.orbits.iter().filter(|o| o.flag != 0) {
                 cmds.push(solid(o.cx as f32 / 16.0, o.cy as f32 / 16.0, 16.0, 16.0, [0.7, 0.85, 1.0, 1.0]));
             }
-            cmds.push(solid(b.x as f32 / 16.0, b.y as f32 / 16.0, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0]));
+            // Boss body: real BSS sprite (stage palette) if mapped, else marker.
+            let (bx, by) = (b.x as f32 / 16.0, b.y as f32 / 16.0);
+            match dd.boss_sprites.get(&b.kind()) {
+                Some(&(tex, w, h)) => cmds.push(sprite(tex, bx, by, w, h)),
+                None => cmds.push(solid(bx, by, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0])),
+            }
         }
     }
     if let Some(m) = &sim.midboss {
