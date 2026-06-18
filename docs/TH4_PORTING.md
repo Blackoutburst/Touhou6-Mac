@@ -319,11 +319,17 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Real HUD font** — wire `GAMEFT.BFT` (1bpp ASCII font) for score/labels instead
   of the built-in 5×7 font; draw the original side-panel art. (`GAMEFT.BFT` is
   1bpp, so the 4bpp `Bft` path mangles it — needs a 1bpp decode branch.)
-- **Still markers:** the **midboss** body (its `BSS*`/portrait isn't identified
-  yet — `BSS4`/`6`/`7`/`8` look like midbosses/alts), boss **orbs/rays** (Reimu
-  orbs / Marisa bits / Kurumi spawn-rays), and the **telegraph effects**.
-  Boss **portraits** (`KAO*.CD2`, decode fine with the stage palette) are unused
-  pending the dialogue system.
+- **Midboss + orbs/rays — DONE.** The midboss body draws from `BSS6.CD2`
+  recoloured to the current stage's palette (`DrawData::midboss_sprite`, decoded
+  per-stage at 0.7×; a placeholder until per-stage midbosses are identified).
+  Boss satellites use MIKO16 cels by kind — Reimu orbs = blue balls, Marisa bits
+  = stars, Yuuka6 chasecross = balls — and Kurumi's spawn-rays draw as a dotted
+  line of small blue bullets. Verified in-engine (Reimu's blue-ball orb ring, the
+  midboss maid firing). Boss **portraits** (`KAO*.CD2`, decode fine with the
+  stage palette) are unused pending the dialogue system.
+- **Still markers (intentional):** the **telegraph effects** (gather/circle/spark
+  charge-up glows) stay as translucent markers — they're cosmetic cues, not
+  sprites.
 - **Tile-atlas linear-filter seams** — switch the atlas to nearest filtering if
   seams show when upscaled.
 

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use th04_formats::bft::Bft;
 use th04_formats::boss::BossKind;
-use th04_formats::cdg::Cdg;
+use th04_formats::cdg::{self, Cdg};
 use th04_formats::effects::EffectKind;
 use th04_formats::map::{self, Map};
 use th04_formats::mpn::Mpn;
@@ -64,6 +64,9 @@ pub struct DrawData {
     /// decoded with the boss's stage `.MPN` palette; rivals reuse the player
     /// sheet. Empty entry → fall back to a coloured marker.
     boss_sprites: HashMap<BossKind, (usize, f32, f32)>,
+    /// Midboss body (`BSS6.CD2`) decoded with *this* stage's palette (the
+    /// midboss is a per-stage placeholder); `None` → marker.
+    midboss_sprite: Option<(usize, f32, f32)>,
     /// Background tiles are packed into one atlas texture so the whole
     /// background draws in a single batch (per-tile textures = hundreds of
     /// draw calls, which made WebGL drop tiles / flicker).
@@ -147,6 +150,15 @@ fn build_fx_sheet(engine: &Engine, arc: &Archive, textures: &mut Vec<Texture>) -
     FxSheet { cels }
 }
 
+/// Decode `CD2` image 0 with a 16-colour palette into a texture.
+fn decode_cd2(engine: &Engine, arc: &Archive, name: &str, pal: &[[u8; 3]; cdg::PALETTE_LEN], textures: &mut Vec<Texture>) -> Option<(usize, f32, f32)> {
+    let cd = arc.get(name).and_then(|d| Cdg::parse(&d))?;
+    let rgba = cd.decode_rgba(0, pal)?;
+    let idx = textures.len();
+    textures.push(engine.create_texture(&rgba, cd.width as u32, cd.height as u32));
+    Some((idx, cd.width as f32, cd.height as f32))
+}
+
 /// Decode each boss's body sprite. The stage bosses come from `BSS*.CD2`, which
 /// carries no palette — but the playfield shares one palette, so decoding with
 /// the boss's stage `.MPN` palette yields the right colours (verified: Orange
@@ -158,7 +170,6 @@ fn build_boss_sprites(
     players: &[PlayerSprite; 2],
     textures: &mut Vec<Texture>,
 ) -> HashMap<BossKind, (usize, f32, f32)> {
-    use th04_formats::mpn::Mpn;
     let mut map = HashMap::new();
     // (kind, BSS file, the .MPN whose palette to decode it with).
     let table = [
@@ -169,12 +180,9 @@ fn build_boss_sprites(
         (BossKind::Yuuka6, "BSS5.CD2", "ST05.MPN"),
     ];
     for (kind, bss, mpn_name) in table {
-        let Some(cd) = arc.get(bss).and_then(|d| Cdg::parse(&d)) else { continue };
         let Some(pal) = arc.get(mpn_name).and_then(|d| Mpn::parse(&d)).map(|m| m.palette) else { continue };
-        if let Some(rgba) = cd.decode_rgba(0, &pal) {
-            let idx = textures.len();
-            textures.push(engine.create_texture(&rgba, cd.width as u32, cd.height as u32));
-            map.insert(kind, (idx, cd.width as f32, cd.height as f32));
+        if let Some(sprite) = decode_cd2(engine, arc, bss, &pal, textures) {
+            map.insert(kind, sprite);
         }
     }
     // Rival (stage 4) reuses the player character sheets, drawn boss-sized.
@@ -286,12 +294,19 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
         let mut cel_idx = shared_cels.clone();
         push_sheet(engine, arc, &std_name.replace(".STD", ".BFT"), 128, &mut cel_idx, &mut textures);
         let map = arc.get(&std_name.replace(".STD", ".MAP")).and_then(|b| Map::parse(&b));
+        // Midboss body, recoloured to this stage's palette (placeholder sprite).
+        let stage_pal = arc
+            .get(&std_name.replace(".STD", ".MPN"))
+            .and_then(|d| Mpn::parse(&d))
+            .map(|m| m.palette);
+        let midboss_sprite = stage_pal.and_then(|pal| decode_cd2(engine, arc, "BSS6.CD2", &pal, &mut textures));
         let std = Std::parse(&arc.get(std_name).unwrap_or_default()).expect("parse STD");
         let section_order = std.map_section_order.clone();
         let dd = DrawData {
             players,
             fx: fx.clone(),
             boss_sprites: boss_sprites.clone(),
+            midboss_sprite,
             tile_atlas,
             tile_cols,
             atlas_w,
@@ -463,18 +478,32 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     }
     if let Some(b) = &sim.boss {
         if !b.defeated {
-            // Spawn-rays (Kurumi): dotted line from the boss to the growing tip.
+            // Spawn-rays (Kurumi): a dotted line of small blue bullets from the
+            // boss to the growing tip.
             for r in b.rays.iter().filter(|r| r.flag != 0) {
                 for k in 0..=6 {
                     let t = k as f32 / 6.0;
                     let x = (r.ox as f32 + (r.tx - r.ox) as f32 * t) / 16.0;
                     let y = (r.oy as f32 + (r.ty - r.oy) as f32 * t) / 16.0;
-                    cmds.push(solid(x, y, 6.0, 6.0, [0.6, 0.8, 1.0, 0.9]));
+                    match dd.fx.cel(bullet_cel(2)) {
+                        Some((tex, ..)) => cmds.push(sprite(tex, x, y, 10.0, 10.0)),
+                        None => cmds.push(solid(x, y, 6.0, 6.0, [0.6, 0.8, 1.0, 0.9])),
+                    }
                 }
             }
-            // Orbiting satellites (Reimu orbs / Marisa bits).
+            // Orbiting satellites: Reimu orbs (blue balls), Marisa bits (stars),
+            // others (Yuuka6 chasecross) plain balls.
+            let orb_cel = match b.kind() {
+                BossKind::Marisa => 27, // star
+                BossKind::Reimu => 28,  // blue ball
+                _ => 33,                // small ball
+            };
             for o in b.orbits.iter().filter(|o| o.flag != 0) {
-                cmds.push(solid(o.cx as f32 / 16.0, o.cy as f32 / 16.0, 16.0, 16.0, [0.7, 0.85, 1.0, 1.0]));
+                let (x, y) = (o.cx as f32 / 16.0, o.cy as f32 / 16.0);
+                match dd.fx.cel(orb_cel) {
+                    Some((tex, w, h)) => cmds.push(sprite(tex, x, y, w, h)),
+                    None => cmds.push(solid(x, y, 16.0, 16.0, [0.7, 0.85, 1.0, 1.0])),
+                }
             }
             // Boss body: real BSS sprite (stage palette) if mapped, else marker.
             let (bx, by) = (b.x as f32 / 16.0, b.y as f32 / 16.0);
@@ -486,7 +515,12 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     }
     if let Some(m) = &sim.midboss {
         if !m.defeated {
-            cmds.push(solid(m.x as f32 / 16.0, m.y as f32 / 16.0, 40.0, 40.0, [0.3, 0.9, 0.9, 1.0]));
+            let (mx, my) = (m.x as f32 / 16.0, m.y as f32 / 16.0);
+            match dd.midboss_sprite {
+                // Midbosses are smaller than bosses — draw the 128px cel at ~0.7×.
+                Some((tex, w, h)) => cmds.push(sprite(tex, mx, my, w * 0.7, h * 0.7)),
+                None => cmds.push(solid(mx, my, 40.0, 40.0, [0.3, 0.9, 0.9, 1.0])),
+            }
         }
     }
     // Enemy/boss bullets — real MIKO16 sprites (true colours), marker fallback.
