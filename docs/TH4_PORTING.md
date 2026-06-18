@@ -316,9 +316,16 @@ Midboss 1 at frame 2400 regardless of stage).
   stage-4 rival reuses the player sheet (Reimu=`MIKO.BFT`, Marisa=`MARI.BFT`,
   2×). Verified in-engine for all. Inspect any CD2 with
   `th04-game cd2 <archive> <NAME.CD2> <PAL.MPN|.RGB> [out.png]`.
-- **Real HUD font** — wire `GAMEFT.BFT` (1bpp ASCII font) for score/labels instead
-  of the built-in 5×7 font; draw the original side-panel art. (`GAMEFT.BFT` is
-  1bpp, so the 4bpp `Bft` path mangles it — needs a 1bpp decode branch.)
+- **Real HUD font — DONE.** `Bft` now has a **1bpp branch** (detected as "too
+  small to be 4bpp" — monochrome cels, no palette, ink → opaque white for
+  tinting), so `GAMEFT.BFT` decodes. It isn't plain ASCII: the italic glyph
+  block runs `0-9` at cels 160-169, `A-V` at 170-191, `W-Z` at 192-195
+  (`gameft_cel`). The HUD score + the `SCORE/PLAYER/BOMB/POWER` labels now draw
+  in the real game font (`build_hud_font`/`draw_hud_text`), 5×7 fallback if the
+  font is absent. (The original side-panel border art is still TODO; the menu
+  text still uses the built-in 5×7 font.)
+- **Boss animation — DONE.** `BSS*.CD2`'s frames all decode (`decode_cd2_all`);
+  the boss body cycles them slowly for a living idle (`frame/24 % nframes`).
 - **Midboss + orbs/rays — DONE.** The midboss body draws from `BSS6.CD2`
   recoloured to the current stage's palette (`DrawData::midboss_sprite`, decoded
   per-stage at 0.7×; a placeholder until per-stage midbosses are identified).

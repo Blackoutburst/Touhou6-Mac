@@ -60,10 +60,14 @@ pub struct DrawData {
     players: [PlayerSprite; 2],
     /// Bullets / shots / items sheet (`MIKO16.BFT`).
     fx: FxSheet,
-    /// Boss body sprites by kind: texture index + display size. `BSS*.CD2`
-    /// decoded with the boss's stage `.MPN` palette; rivals reuse the player
-    /// sheet. Empty entry → fall back to a coloured marker.
-    boss_sprites: HashMap<BossKind, (usize, f32, f32)>,
+    /// `GAMEFT.BFT` glyph cels (16×16, monochrome white ink — tint at draw),
+    /// indexed by cel number; see [`gameft_cel`]. Empty → fall back to the
+    /// built-in 5×7 font.
+    hud_font: Vec<(usize, f32, f32)>,
+    /// Boss body sprites by kind: the `BSS*.CD2` animation frames (texture +
+    /// display size), decoded with the boss's stage `.MPN` palette; rivals reuse
+    /// the player sheet (one frame). Missing/empty → fall back to a marker.
+    boss_sprites: HashMap<BossKind, Vec<(usize, f32, f32)>>,
     /// Midboss body (`BSS6.CD2`) decoded with *this* stage's palette (the
     /// midboss is a per-stage placeholder); `None` → marker.
     midboss_sprite: Option<(usize, f32, f32)>,
@@ -159,6 +163,20 @@ fn decode_cd2(engine: &Engine, arc: &Archive, name: &str, pal: &[[u8; 3]; cdg::P
     Some((idx, cd.width as f32, cd.height as f32))
 }
 
+/// Decode every animation frame of a `CD2` (idle / attack / …) into textures.
+fn decode_cd2_all(engine: &Engine, arc: &Archive, name: &str, pal: &[[u8; 3]; cdg::PALETTE_LEN], textures: &mut Vec<Texture>) -> Vec<(usize, f32, f32)> {
+    let Some(cd) = arc.get(name).and_then(|d| Cdg::parse(&d)) else { return Vec::new() };
+    let mut frames = Vec::with_capacity(cd.image_count);
+    for i in 0..cd.image_count {
+        if let Some(rgba) = cd.decode_rgba(i, pal) {
+            let idx = textures.len();
+            textures.push(engine.create_texture(&rgba, cd.width as u32, cd.height as u32));
+            frames.push((idx, cd.width as f32, cd.height as f32));
+        }
+    }
+    frames
+}
+
 /// Decode each boss's body sprite. The stage bosses come from `BSS*.CD2`, which
 /// carries no palette — but the playfield shares one palette, so decoding with
 /// the boss's stage `.MPN` palette yields the right colours (verified: Orange
@@ -169,7 +187,7 @@ fn build_boss_sprites(
     arc: &Archive,
     players: &[PlayerSprite; 2],
     textures: &mut Vec<Texture>,
-) -> HashMap<BossKind, (usize, f32, f32)> {
+) -> HashMap<BossKind, Vec<(usize, f32, f32)>> {
     let mut map = HashMap::new();
     // (kind, BSS file, the .MPN whose palette to decode it with).
     let table = [
@@ -181,17 +199,67 @@ fn build_boss_sprites(
     ];
     for (kind, bss, mpn_name) in table {
         let Some(pal) = arc.get(mpn_name).and_then(|d| Mpn::parse(&d)).map(|m| m.palette) else { continue };
-        if let Some(sprite) = decode_cd2(engine, arc, bss, &pal, textures) {
-            map.insert(kind, sprite);
+        let frames = decode_cd2_all(engine, arc, bss, &pal, textures);
+        if !frames.is_empty() {
+            map.insert(kind, frames);
         }
     }
-    // Rival (stage 4) reuses the player character sheets, drawn boss-sized.
+    // Rival (stage 4) reuses the player character sheet, drawn boss-sized.
     let scale = 2.0;
     let r = &players[0];
-    map.insert(BossKind::Reimu, (r.base, r.wh.0 * scale, r.wh.1 * scale));
+    map.insert(BossKind::Reimu, vec![(r.base, r.wh.0 * scale, r.wh.1 * scale)]);
     let m = &players[1];
-    map.insert(BossKind::Marisa, (m.base, m.wh.0 * scale, m.wh.1 * scale));
+    map.insert(BossKind::Marisa, vec![(m.base, m.wh.0 * scale, m.wh.1 * scale)]);
     map
+}
+
+/// Load `GAMEFT.BFT` (the 1bpp game font) cel-by-cel for the HUD.
+fn build_hud_font(engine: &Engine, arc: &Archive, textures: &mut Vec<Texture>) -> Vec<(usize, f32, f32)> {
+    let mut cels = Vec::new();
+    if let Some(b) = arc.get("GAMEFT.BFT").and_then(|d| Bft::parse(&d)) {
+        for n in 0..b.count {
+            match b.decode_rgba(n, Some(0)) {
+                Some(rgba) => {
+                    let idx = textures.len();
+                    textures.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
+                    cels.push((idx, b.width as f32, b.height as f32));
+                }
+                None => cels.push((0, 16.0, 16.0)),
+            }
+        }
+    }
+    cels
+}
+
+/// Map a character to its `GAMEFT.BFT` cel. The font isn't plain ASCII: the
+/// italic glyph block runs digits `0-9` at cels 160-169, `A-V` at 170-191 and
+/// `W-Z` at 192-195. Unsupported characters (incl. space) return `None`.
+fn gameft_cel(ch: char) -> Option<usize> {
+    match ch.to_ascii_uppercase() {
+        '0'..='9' => Some(160 + (ch as usize - '0' as usize)),
+        'A'..='V' => Some(170 + (ch.to_ascii_uppercase() as usize - 'A' as usize)),
+        'W'..='Z' => Some(192 + (ch.to_ascii_uppercase() as usize - 'W' as usize)),
+        _ => None,
+    }
+}
+
+/// Draw `text` with the GAMEFT font, top-left at (`x`, `y`), each glyph `px`
+/// square, tinted `tint`. Returns the x advance (so callers can right-align).
+fn draw_hud_text(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], x: f32, y: f32, text: &str, px: f32, tint: [f32; 4]) {
+    let adv = px * 0.92; // italic glyphs overlap slightly
+    let mut cx = x;
+    for ch in text.chars() {
+        if let Some(&(tex, ..)) = gameft_cel(ch).and_then(|c| font.get(c)) {
+            cmds.push(DrawCmd { tex, dst: [cx, y, px, px], src: [0.0, 0.0, 1.0, 1.0], tint, rot: 0.0 });
+        }
+        cx += adv;
+    }
+}
+
+/// Draw `value` right-aligned ending at `x_right` with the GAMEFT font.
+fn draw_hud_number(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], x_right: f32, y: f32, value: i64, px: f32, tint: [f32; 4]) {
+    let s = value.max(0).to_string();
+    draw_hud_text(cmds, font, x_right - s.len() as f32 * px * 0.92, y, &s, px, tint);
 }
 
 /// Map a bullet's type (`patnum`, the ported `PAT_*` ids) to a `MIKO16` cel.
@@ -283,6 +351,9 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
     // Bullets / shots / items, indexed directly by MIKO16 cel number.
     let fx = build_fx_sheet(engine, arc, &mut textures);
 
+    // The real game font (GAMEFT.BFT, 1bpp), for the HUD.
+    let hud_font = build_hud_font(engine, arc, &mut textures);
+
     // Boss body sprites (BSS*.CD2 with each boss's stage palette; rivals reuse
     // the player sheets).
     let boss_sprites = build_boss_sprites(engine, arc, &players, &mut textures);
@@ -305,6 +376,7 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
         let dd = DrawData {
             players,
             fx: fx.clone(),
+            hud_font: hud_font.clone(),
             boss_sprites: boss_sprites.clone(),
             midboss_sprite,
             tile_atlas,
@@ -505,10 +577,14 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
                     None => cmds.push(solid(x, y, 16.0, 16.0, [0.7, 0.85, 1.0, 1.0])),
                 }
             }
-            // Boss body: real BSS sprite (stage palette) if mapped, else marker.
+            // Boss body: animated BSS sprite (stage palette) if mapped, else
+            // marker. Cycle the frames slowly for a living idle.
             let (bx, by) = (b.x as f32 / 16.0, b.y as f32 / 16.0);
-            match dd.boss_sprites.get(&b.kind()) {
-                Some(&(tex, w, h)) => cmds.push(sprite(tex, bx, by, w, h)),
+            match dd.boss_sprites.get(&b.kind()).filter(|f| !f.is_empty()) {
+                Some(frames) => {
+                    let (tex, w, h) = frames[(sim.frame as usize / 24) % frames.len()];
+                    cmds.push(sprite(tex, bx, by, w, h));
+                }
                 None => cmds.push(solid(bx, by, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0])),
             }
         }
@@ -589,24 +665,34 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     cmds.push(mask(0.0, PF_TOP, PF_LEFT, PF_H));
     cmds.push(mask(PF_LEFT + PF_W, PF_TOP, 640.0 - (PF_LEFT + PF_W), PF_H));
 
-    // HUD in the right panel (graphical; the bitmap digits stand in for the
-    // original gaiji font). Panel inner-x ≈ 520..632.
-    let px = PF_LEFT + PF_W + 8.0; // 520
+    // HUD in the right panel. Labels + the score use the real game font
+    // (GAMEFT.BFT) when it loaded, falling back to the built-in 5×7 digits.
+    // Panel inner-x ≈ 520..632.
+    let panel_x = PF_LEFT + PF_W + 8.0; // 520
     let white = [1.0, 1.0, 1.0, 1.0];
-    // Score (right-aligned).
-    push_number(&mut cmds, 632.0, 52.0, sim.score, 3.0, white);
-    // Lives (green) and bombs (blue) as icon rows.
+    let label = [1.0, 0.85, 0.4, 1.0]; // gold
+    let font = &dd.hud_font;
+    if !font.is_empty() {
+        draw_hud_text(&mut cmds, font, panel_x, 38.0, "SCORE", 11.0, label);
+        draw_hud_number(&mut cmds, font, 632.0, 54.0, sim.score, 14.0, white);
+        draw_hud_text(&mut cmds, font, panel_x, 80.0, "PLAYER", 11.0, label);
+        draw_hud_text(&mut cmds, font, panel_x, 116.0, "BOMB", 11.0, label);
+        draw_hud_text(&mut cmds, font, panel_x, 152.0, "POWER", 11.0, label);
+    } else {
+        push_number(&mut cmds, 632.0, 52.0, sim.score, 3.0, white);
+    }
+    // Lives (green) and bombs (blue) as icon rows, under their labels.
     for i in 0..sim.player.lives.max(0).min(8) {
-        cmds.push(rect(px + i as f32 * 12.0, 92.0, 9.0, 9.0, [0.4, 1.0, 0.5, 1.0]));
+        cmds.push(rect(panel_x + i as f32 * 12.0, 96.0, 9.0, 9.0, [0.4, 1.0, 0.5, 1.0]));
     }
     for i in 0..sim.player.bombs.max(0).min(8) {
-        cmds.push(rect(px + i as f32 * 12.0, 116.0, 9.0, 9.0, [0.5, 0.7, 1.0, 1.0]));
+        cmds.push(rect(panel_x + i as f32 * 12.0, 132.0, 9.0, 9.0, [0.5, 0.7, 1.0, 1.0]));
     }
     // Power bar (0..128).
     let pw = 104.0;
-    cmds.push(rect(px, 148.0, pw, 8.0, [0.2, 0.2, 0.25, 1.0]));
+    cmds.push(rect(panel_x, 170.0, pw, 8.0, [0.2, 0.2, 0.25, 1.0]));
     let fill = pw * (sim.player.power as f32 / 128.0).min(1.0);
-    cmds.push(rect(px, 148.0, fill, 8.0, [1.0, 0.85, 0.3, 1.0]));
+    cmds.push(rect(panel_x, 170.0, fill, 8.0, [1.0, 0.85, 0.3, 1.0]));
 
     // Boss / midboss HP bar across the top of the playfield.
     let hp = match (&sim.boss, &sim.midboss) {
