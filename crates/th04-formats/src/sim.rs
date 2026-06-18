@@ -401,11 +401,15 @@ impl StageSim {
                 it.y += it.vy;
                 if (it.x - px).abs() < 24 * SUBPIXEL && (it.y - py).abs() < 24 * SUBPIXEL {
                     it.active = false;
-                    // Power items raise the shot; point items score. (Kinds: 0 =
-                    // power, 2 = full-power "F"; everything else = point.)
+                    // Apply the item by its ReC98 kind (item_type_t).
+                    use crate::player::{item, BIGPOWER_PER_ITEM, POWER_MAX, POWER_PER_ITEM};
                     match it.kind {
-                        0 => self.player.add_power(crate::player::POWER_PER_ITEM),
-                        2 => self.player.add_power(crate::player::POWER_MAX),
+                        item::POWER => self.player.add_power(POWER_PER_ITEM),
+                        item::BIGPOWER => self.player.add_power(BIGPOWER_PER_ITEM),
+                        item::FULLPOWER => self.player.add_power(POWER_MAX),
+                        item::BOMB => self.player.bombs += 1,
+                        item::ONEUP => self.player.lives += 1,
+                        // POINT / DREAM (and anything else) → score.
                         _ => self.score += 100,
                     }
                 } else if it.y > 420 * SUBPIXEL {
@@ -485,6 +489,21 @@ mod tests {
             sim.step(&input);
         }
         assert!(sim.enemies_spawned >= 1, "enemy should have spawned");
+    }
+
+    #[test]
+    fn item_kinds_apply_their_effects() {
+        use crate::player::{item, POWER_MAX};
+        let mut sim = StageSim::new(tiny_stage(), 0, None);
+        let (px, py) = (sim.player.x, sim.player.y);
+        let (bombs0, lives0) = (sim.player.bombs, sim.player.lives);
+        for kind in [item::BOMB, item::ONEUP, item::FULLPOWER] {
+            sim.items.push(Item { x: px, y: py, vy: 0, kind, active: true });
+        }
+        sim.step(&Input::default());
+        assert_eq!(sim.player.bombs, bombs0 + 1, "bomb item");
+        assert_eq!(sim.player.lives, lives0 + 1, "1up item");
+        assert_eq!(sim.player.power, POWER_MAX, "fullpower item");
     }
 
     #[test]

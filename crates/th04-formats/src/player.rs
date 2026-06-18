@@ -37,9 +37,22 @@ pub const POWER_MAX: u8 = 128;
 /// `th04/main/player/shot_levels[data].asm`): level 1 at power 6, 2 at 12, …,
 /// 9 at 128. The shot level is how many of these thresholds the power has met.
 const SHOT_LEVEL_TO_POWER: [u8; 9] = [6, 12, 16, 24, 32, 48, 72, 96, 128];
-/// Power gained per small power item, and the full-power ("F") item value.
-/// (TH04 mechanic; exact per-item amounts pending ReC98 — small = 1.)
+/// Power gained per small power item, and per big-power item. (ReC98 item kinds
+/// are exact — see [`item`]; the exact power *amounts* are still approximate:
+/// small = 1, big = 8.)
 pub const POWER_PER_ITEM: u8 = 1;
+pub const BIGPOWER_PER_ITEM: u8 = 8;
+
+/// TH04 item kinds (`item_type_t`, `th04/main/item/item.hpp`).
+pub mod item {
+    pub const POWER: u8 = 0;
+    pub const POINT: u8 = 1;
+    pub const DREAM: u8 = 2;
+    pub const BIGPOWER: u8 = 3;
+    pub const BOMB: u8 = 4;
+    pub const ONEUP: u8 = 5;
+    pub const FULLPOWER: u8 = 6;
+}
 /// Power lost on a miss — TH04 drops the shot a tier when you die.
 pub const POWER_LOSS_ON_DEATH: u8 = 16;
 

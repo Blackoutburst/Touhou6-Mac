@@ -284,10 +284,14 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Exact player shot tables** — Reimu/Marisa A/B × 10 power levels + Marisa A's
   option lasers (the ~40 `shot_*` functions in `th04_main.asm`). Currently a
   simplified fan/column model.
-- **Item drop table** — the per-enemy drop kind comes from the timeline spawn
-  arg (`e.item`); now power items (kind 0 / full-power 2) raise power and point
-  items score. Still TODO: the real "no-drop" sentinel (every kill currently
-  drops something) and exact point-item value scaling.
+- **Item kinds — EXACT.** Items use ReC98's `item_type_t`
+  (`th04/main/item/item.hpp`): `POWER 0, POINT 1, DREAM 2, BIGPOWER 3, BOMB 4,
+  1UP 5, FULLPOWER 6`. The sim applies each correctly (power tiers raise power,
+  BOMB → +1 bomb, 1UP → +1 life, POINT/DREAM → score) and the MIKO16 item icons
+  map as `16 + kind`. Still TODO: exact per-item power *amounts* (small=1/big=8
+  approx), and the `IT_ENEMY_DROP_NEXT` (-1) drop *sequence* per enemy
+  (`enemy_drops[data].asm`) — the drop kind currently comes from the spawn arg,
+  defaulting to a point item.
 - **Power progression — DONE.** Power items raise `power` (0..128,
   `Player::add_power`); the shot level is **exact** — `Player::shot_level()`
   counts the ReC98 `_SHOT_LEVEL_TO_POWER` thresholds `[6,12,16,24,32,48,72,96,

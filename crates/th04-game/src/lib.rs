@@ -303,14 +303,13 @@ fn bullet_cel(patnum: u8) -> usize {
     }
 }
 
-/// Map a dropped item's `kind` to a `MIKO16` item cel.
+/// Map a dropped item's `kind` to a `MIKO16` item cel. The kinds are ReC98's
+/// `item_type_t` (POWER 0, POINT 1, DREAM 2, BIGPOWER 3, BOMB 4, 1UP 5,
+/// FULLPOWER 6) and the MIKO16 item icons sit in that order from cel 16.
 fn item_cel(kind: u8) -> usize {
     match kind {
-        0 => 16, // power "P"
-        1 => 17, // point
-        2 => 20, // bomb "B"
-        3 => 21, // 1up
-        _ => 17,
+        0..=6 => 16 + kind as usize,
+        _ => 17, // unknown → point
     }
 }
 
