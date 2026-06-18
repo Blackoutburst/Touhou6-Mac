@@ -322,8 +322,10 @@ Midboss 1 at frame 2400 regardless of stage).
   block runs `0-9` at cels 160-169, `A-V` at 170-191, `W-Z` at 192-195
   (`gameft_cel`). The HUD score + the `SCORE/PLAYER/BOMB/POWER` labels now draw
   in the real game font (`build_hud_font`/`draw_hud_text`), 5×7 fallback if the
-  font is absent. (The original side-panel border art is still TODO; the menu
-  text still uses the built-in 5×7 font.)
+  font is absent. The **menu** now draws in the same GAMEFT font too
+  (`menu.rs` `gt`/`gtc`/`gw` wrappers over the shared `hud_font`, 5×7 fallback),
+  so the title/menu/result text matches the HUD. (The original side-panel border
+  art is still TODO.)
 - **Boss animation — DONE.** `BSS*.CD2`'s frames all decode (`decode_cd2_all`);
   the boss body cycles them slowly for a living idle (`frame/24 % nframes`).
 - **Midboss + orbs/rays — DONE.** The midboss body draws from `BSS6.CD2`

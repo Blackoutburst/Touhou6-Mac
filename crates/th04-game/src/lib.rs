@@ -245,7 +245,7 @@ fn gameft_cel(ch: char) -> Option<usize> {
 
 /// Draw `text` with the GAMEFT font, top-left at (`x`, `y`), each glyph `px`
 /// square, tinted `tint`. Returns the x advance (so callers can right-align).
-fn draw_hud_text(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], x: f32, y: f32, text: &str, px: f32, tint: [f32; 4]) {
+pub(crate) fn draw_hud_text(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], x: f32, y: f32, text: &str, px: f32, tint: [f32; 4]) {
     let adv = px * 0.92; // italic glyphs overlap slightly
     let mut cx = x;
     for ch in text.chars() {
@@ -254,6 +254,11 @@ fn draw_hud_text(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], x: f32, y:
         }
         cx += adv;
     }
+}
+
+/// Pixel width of `text` rendered with the GAMEFT font at glyph size `px`.
+pub(crate) fn hud_text_width(text: &str, px: f32) -> f32 {
+    text.chars().count() as f32 * px * 0.92
 }
 
 /// Draw `value` right-aligned ending at `x_right` with the GAMEFT font.

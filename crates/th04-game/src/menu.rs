@@ -18,7 +18,7 @@
 use th04_formats::sim::StageSim;
 use th06_engine::{DrawCmd, Frame, Input, Key};
 
-use crate::font::{draw_text, draw_text_centered, text_width};
+use crate::font::{draw_text, text_width};
 use crate::{boss_for, draw_frame, map_input, StageAssets};
 
 const SCREEN_W: f32 = 640.0;
@@ -100,6 +100,9 @@ enum Screen {
 pub struct MenuApp {
     screen: Screen,
     stages: Vec<StageAssets>,
+    /// The real game font (`GAMEFT.BFT`) cels, shared from the stage assets so
+    /// the menu text matches the HUD. Empty → the built-in 5×7 font is used.
+    font: Vec<(usize, f32, f32)>,
     /// Title image: texture index + draw size (None → a text-only title).
     title_tex: Option<(usize, f32, f32)>,
     /// Which main-menu action opened the character→shot→rank sequence.
@@ -115,9 +118,11 @@ pub struct MenuApp {
 
 impl MenuApp {
     pub fn new(stages: Vec<StageAssets>, title_tex: Option<(usize, f32, f32)>) -> Self {
+        let font = stages.first().map(|s| s.dd.hud_font.clone()).unwrap_or_default();
         MenuApp {
             screen: Screen::Title,
             stages,
+            font,
             title_tex,
             pending: MainAction::Start,
             character: 0,
@@ -182,7 +187,7 @@ impl MenuApp {
             Screen::Title => {
                 self.draw_backdrop(&mut cmds, false);
                 if (self.blink / 30) % 2 == 0 {
-                    draw_text_centered(&mut cmds, SCREEN_W / 2.0, 420.0, "PRESS Z", 4.0, [1.0; 4]);
+                    gtc(&mut cmds, &self.font, SCREEN_W / 2.0, 414.0, "PRESS Z", 26.0, [1.0; 4]);
                 }
                 self.draw_hiscore(&mut cmds, 458.0);
                 if confirm {
@@ -198,7 +203,7 @@ impl MenuApp {
                 self.draw_hiscore(&mut cmds, 30.0);
                 let entries: Vec<(&str, bool)> =
                     MAIN_ENTRIES.iter().map(|(s, a)| (*s, *a != MainAction::Disabled)).collect();
-                draw_menu_list(&mut cmds, 210.0, &entries, cursor);
+                draw_menu_list(&mut cmds, &self.font, 210.0, &entries, cursor);
                 if confirm {
                     match MAIN_ENTRIES[cursor].1 {
                         MainAction::Quit => {
@@ -221,8 +226,8 @@ impl MenuApp {
             Screen::Char(cursor) => {
                 let cursor = step_cursor(cursor, CHARACTERS.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_heading(&mut cmds, "SELECT CHARACTER");
-                draw_menu_list(&mut cmds, 240.0, &labels(&CHARACTERS), cursor);
+                draw_heading(&mut cmds, &self.font, "SELECT CHARACTER");
+                draw_menu_list(&mut cmds, &self.font, 240.0, &labels(&CHARACTERS), cursor);
                 if confirm {
                     self.character = cursor;
                     Screen::Shot(self.shot)
@@ -235,8 +240,8 @@ impl MenuApp {
             Screen::Shot(cursor) => {
                 let cursor = step_cursor(cursor, SHOTS.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_heading(&mut cmds, "SELECT SHOT TYPE");
-                draw_menu_list(&mut cmds, 240.0, &labels(&SHOTS), cursor);
+                draw_heading(&mut cmds, &self.font, "SELECT SHOT TYPE");
+                draw_menu_list(&mut cmds, &self.font, 240.0, &labels(&SHOTS), cursor);
                 if confirm {
                     self.shot = cursor;
                     Screen::Rank(self.rank)
@@ -249,9 +254,9 @@ impl MenuApp {
             Screen::Rank(cursor) => {
                 let cursor = step_cursor(cursor, RANKS.len(), up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_heading(&mut cmds, "SELECT DIFFICULTY");
-                draw_menu_list(&mut cmds, 210.0, &labels(&RANKS), cursor);
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 396.0, "PATTERNS ARE NORMAL RANK", 2.0, [0.6, 0.6, 0.7, 1.0]);
+                draw_heading(&mut cmds, &self.font, "SELECT DIFFICULTY");
+                draw_menu_list(&mut cmds, &self.font, 210.0, &labels(&RANKS), cursor);
+                gtc(&mut cmds, &self.font, SCREEN_W / 2.0, 400.0, "PATTERNS ARE NORMAL RANK", 13.0, [0.6, 0.6, 0.7, 1.0]);
                 if confirm {
                     self.rank = cursor;
                     self.after_rank()
@@ -264,10 +269,10 @@ impl MenuApp {
             Screen::StageSelect(cursor) => {
                 let cursor = step_cursor(cursor, LAST_NORMAL_STAGE + 1, up, down);
                 self.draw_backdrop(&mut cmds, true);
-                draw_heading(&mut cmds, "SELECT STAGE");
+                draw_heading(&mut cmds, &self.font, "SELECT STAGE");
                 let names: Vec<String> = (0..=LAST_NORMAL_STAGE).map(|i| format!("STAGE {}", i + 1)).collect();
                 let entries: Vec<(&str, bool)> = names.iter().map(|s| (s.as_str(), true)).collect();
-                draw_menu_list(&mut cmds, 150.0, &entries, cursor);
+                draw_menu_list(&mut cmds, &self.font, 150.0, &entries, cursor);
                 if confirm {
                     self.start(cursor, Mode::Single)
                 } else if back {
@@ -289,10 +294,10 @@ impl MenuApp {
                     }
                 }
                 self.draw_backdrop(&mut cmds, true);
-                draw_heading(&mut cmds, "OPTION");
-                draw_option_row(&mut cmds, 200.0, "START LIVES", &self.config.start_lives.to_string(), cursor == 0);
-                draw_option_row(&mut cmds, 250.0, "START BOMBS", &self.config.start_bombs.to_string(), cursor == 1);
-                draw_option_row(&mut cmds, 320.0, "EXIT", "", cursor == 2);
+                draw_heading(&mut cmds, &self.font, "OPTION");
+                draw_option_row(&mut cmds, &self.font, 200.0, "START LIVES", &self.config.start_lives.to_string(), cursor == 0);
+                draw_option_row(&mut cmds, &self.font, 250.0, "START BOMBS", &self.config.start_bombs.to_string(), cursor == 1);
+                draw_option_row(&mut cmds, &self.font, 320.0, "EXIT", "", cursor == 2);
                 // EXIT row (or back) returns to the main menu.
                 if back || (confirm && cursor == 2) {
                     Screen::Main(0)
@@ -334,10 +339,10 @@ impl MenuApp {
                 } else {
                     ("GAME OVER", [1.0, 0.5, 0.5, 1.0])
                 };
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 170.0, msg, 6.0, col);
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 260.0, &format!("SCORE {}", score), 3.0, [1.0; 4]);
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 300.0, &format!("HI-SCORE {}", self.high_score), 3.0, [0.9, 0.9, 0.6, 1.0]);
-                draw_text_centered(&mut cmds, SCREEN_W / 2.0, 360.0, "PRESS Z", 3.0, [0.8; 4]);
+                gtc(&mut cmds, &self.font, SCREEN_W / 2.0, 160.0, msg, 50.0, col);
+                gtc(&mut cmds, &self.font, SCREEN_W / 2.0, 250.0, &format!("SCORE {}", score), 24.0, [1.0; 4]);
+                gtc(&mut cmds, &self.font, SCREEN_W / 2.0, 295.0, &format!("HISCORE {}", self.high_score), 24.0, [0.9, 0.9, 0.6, 1.0]);
+                gtc(&mut cmds, &self.font, SCREEN_W / 2.0, 355.0, "PRESS Z", 22.0, [0.8; 4]);
                 if confirm || back || t > 600 {
                     Screen::Title
                 } else {
@@ -359,8 +364,8 @@ impl MenuApp {
                 cmds.push(DrawCmd { tex, dst: [x, y, w, h], src: [0.0, 0.0, 1.0, 1.0], tint: [1.0; 4], rot: 0.0 });
             }
             None => {
-                draw_text_centered(cmds, SCREEN_W / 2.0, 120.0, "TOUHOU 4", 7.0, [1.0, 0.9, 0.5, 1.0]);
-                draw_text_centered(cmds, SCREEN_W / 2.0, 190.0, "LOTUS LAND STORY", 4.0, [0.9, 0.8, 1.0, 1.0]);
+                gtc(cmds, &self.font, SCREEN_W / 2.0, 110.0, "TOUHOU 4", 48.0, [1.0, 0.9, 0.5, 1.0]);
+                gtc(cmds, &self.font, SCREEN_W / 2.0, 185.0, "LOTUS LAND STORY", 26.0, [0.9, 0.8, 1.0, 1.0]);
             }
         }
         if dim {
@@ -369,7 +374,7 @@ impl MenuApp {
     }
 
     fn draw_hiscore(&self, cmds: &mut Vec<DrawCmd>, y: f32) {
-        draw_text_centered(cmds, SCREEN_W / 2.0, y, &format!("HI-SCORE {}", self.high_score), 2.0, [0.9, 0.9, 0.6, 1.0]);
+        gtc(cmds, &self.font, SCREEN_W / 2.0, y, &format!("HISCORE {}", self.high_score), 16.0, [0.9, 0.9, 0.6, 1.0]);
     }
 }
 
@@ -395,16 +400,37 @@ fn fill(x: f32, y: f32, w: f32, h: f32, tint: [f32; 4]) -> DrawCmd {
     DrawCmd { tex: 0, dst: [x, y, w, h], src: [0.0, 0.0, 1.0, 1.0], tint, rot: 0.0 }
 }
 
+// --- text drawing: prefer the real game font (GAMEFT) at glyph size `px`,
+// fall back to the built-in 5×7 font (whose `px` is per-pixel, ~¼ the size). ---
+
+fn gw(font: &[(usize, f32, f32)], s: &str, px: f32) -> f32 {
+    if font.is_empty() {
+        text_width(s, px * 0.25)
+    } else {
+        crate::hud_text_width(s, px)
+    }
+}
+fn gt(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], x: f32, y: f32, s: &str, px: f32, tint: [f32; 4]) {
+    if font.is_empty() {
+        draw_text(cmds, x, y, s, px * 0.25, tint);
+    } else {
+        crate::draw_hud_text(cmds, font, x, y, s, px, tint);
+    }
+}
+fn gtc(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], cx: f32, y: f32, s: &str, px: f32, tint: [f32; 4]) {
+    gt(cmds, font, cx - gw(font, s, px) / 2.0, y, s, px, tint);
+}
+
 /// A section heading near the top of a selection screen.
-fn draw_heading(cmds: &mut Vec<DrawCmd>, label: &str) {
-    draw_text_centered(cmds, SCREEN_W / 2.0, 100.0, label, 4.0, [1.0, 0.95, 0.7, 1.0]);
+fn draw_heading(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], label: &str) {
+    gtc(cmds, font, SCREEN_W / 2.0, 96.0, label, 26.0, [1.0, 0.95, 0.7, 1.0]);
 }
 
 /// A vertical list of entries centred on-screen, the cursor row highlighted.
 /// Disabled entries (`enabled == false`) are dimmed.
-fn draw_menu_list(cmds: &mut Vec<DrawCmd>, top: f32, entries: &[(&str, bool)], cursor: usize) {
-    let px = 4.0;
-    let row_h = 42.0;
+fn draw_menu_list(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], top: f32, entries: &[(&str, bool)], cursor: usize) {
+    let px = 24.0;
+    let row_h = 46.0;
     for (i, (label, enabled)) in entries.iter().enumerate() {
         let y = top + i as f32 * row_h;
         let selected = i == cursor;
@@ -416,30 +442,25 @@ fn draw_menu_list(cmds: &mut Vec<DrawCmd>, top: f32, entries: &[(&str, bool)], c
             [0.85, 0.85, 0.9, 1.0]
         };
         if selected {
-            let w = text_width(label, px) + 40.0;
-            cmds.push(fill(SCREEN_W / 2.0 - w / 2.0, y - 8.0, w, 36.0, [0.25, 0.20, 0.10, 0.85]));
-            draw_text(cmds, SCREEN_W / 2.0 - w / 2.0 + 6.0, y, ">", px, [1.0, 1.0, 0.5, 1.0]);
+            let w = gw(font, label, px) + 40.0;
+            cmds.push(fill(SCREEN_W / 2.0 - w / 2.0, y - 4.0, w, px + 8.0, [0.25, 0.20, 0.10, 0.85]));
         }
-        draw_text_centered(cmds, SCREEN_W / 2.0, y, label, px, color);
+        gtc(cmds, font, SCREEN_W / 2.0, y, label, px, color);
     }
 }
 
-/// One OPTION row: a left-aligned label and (if any) a `< value >` on the
-/// right; the focused row is highlighted with a bar + arrows.
-fn draw_option_row(cmds: &mut Vec<DrawCmd>, y: f32, label: &str, value: &str, selected: bool) {
-    let px = 4.0;
-    let (lx, rx) = (130.0, 520.0);
+/// One OPTION row: a left-aligned label and (if any) value on the right; the
+/// focused row is highlighted (adjust with Left/Right).
+fn draw_option_row(cmds: &mut Vec<DrawCmd>, font: &[(usize, f32, f32)], y: f32, label: &str, value: &str, selected: bool) {
+    let px = 22.0;
+    let (lx, rx) = (130.0, 500.0);
     let color = if selected { [1.0, 1.0, 0.5, 1.0] } else { [0.85, 0.85, 0.9, 1.0] };
     if selected {
-        cmds.push(fill(lx - 14.0, y - 8.0, rx - lx + 60.0, 36.0, [0.25, 0.20, 0.10, 0.85]));
+        cmds.push(fill(lx - 14.0, y - 4.0, rx - lx + 60.0, px + 8.0, [0.25, 0.20, 0.10, 0.85]));
     }
-    draw_text(cmds, lx, y, label, px, color);
+    gt(cmds, font, lx, y, label, px, color);
     if !value.is_empty() {
-        if selected {
-            draw_text(cmds, rx - 36.0, y, "<", px, color);
-            draw_text(cmds, rx + 36.0, y, ">", px, color);
-        }
-        draw_text_centered(cmds, rx, y, value, px, color);
+        gtc(cmds, font, rx, y, value, px, color);
     }
 }
 
