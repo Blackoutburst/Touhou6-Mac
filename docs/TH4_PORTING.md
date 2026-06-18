@@ -182,10 +182,11 @@ gameplay core is more tractable than TH01/TH02 would be.
 
 ## Remaining work / TODO (as of 2026-06-18)
 
-All six stages run end-to-end (native-Rust + WASM): real assets (PAR archive, PI,
-CDG/CD2, BFNT, MPN/MAP), the enemy-script VM, bullet patterns, player
-(per-character shots + bombs), lives/death/respawn, items, midboss (RE'd), the
-correct **per-stage boss** (selection wired), stage clear, scrolling tile
+All six stages run end-to-end (native-Rust + WASM), now behind a **title/menu**
+(title art → character/shot/difficulty select → play → result): real assets (PAR
+archive, PI, CDG/CD2, BFNT, MPN/MAP), the enemy-script VM, bullet patterns,
+player (per-character shots + bombs), lives/death/respawn, items, midboss (RE'd),
+the correct **per-stage boss** (selection wired), stage clear, scrolling tile
 background, sprites, and a HUD. (Stage 1 is the most polished; stages 2–6 still
 need their own midbosses + palettes.)
 
@@ -306,8 +307,21 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Dialogue** — `.TXT` (scrambled Shift-JIS) + the dialog system.
 - **Music** — `.M26`/`.M86` PMD songs (YM2203/YM2608); needs an FM synth core or
   pre-rendered audio, then wire into `th06-engine`'s audio.
-- **Title/menu, difficulty select, scoring/extends, replays.**
+- **Title/menu — DONE (first pass).** `menu.rs` is a state machine driven by the
+  same 60 Hz update closure: title (real `OP1.PI` art from `幻想郷ED.DAT`) → main
+  menu → character select (Reimu/Marisa) → shot type (A/B) → difficulty → play →
+  result splash → back to title. Selections build the `StageSim` on confirm
+  (`Std` is `Clone`d, character → `shot_type` → player sprite + stage-4 rival).
+  Both player sprites preload (`MARI.BFT`/`MIKO.BFT`). A built-in 5×7 font
+  (`font.rs`) renders the text (the authentic `GAMEFT.BFT` is still a TODO).
+  Entry points: `th04-game menu <archive>` (windowed) and the WASM build (which
+  also drops into the menu); offscreen check: `th04-game menushot <archive>`.
+  Main-menu entries beyond START/QUIT are shown but disabled (single-stage
+  textures load up front). **Still TODO: scoring/extends, replays, in-menu
+  multi-stage/practice selection, the real font.**
 
 ### Build / infra
 - WASM bundle built locally to `web/pkg-th04/` (gitignored). `wasm-pack` is
-  installed. Native windowed play: `cargo run -p th04-game -- play <archive> ST00.STD`.
+  installed. The WASM build now opens on the title/menu. Native: windowed
+  title→menu→play `cargo run -p th04-game -- menu <archive>`, or jump straight
+  to a stage `cargo run -p th04-game -- play <archive> ST00.STD`.

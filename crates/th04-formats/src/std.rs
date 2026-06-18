@@ -39,6 +39,7 @@ pub struct TimelineFrame {
     pub spawns: Vec<Spawn>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Std {
     /// Tile-section id for each vertically-scrolled section, in order.
     pub map_section_order: Vec<u8>,

@@ -8,9 +8,11 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlCanvasElement;
 
 use th04_formats::par::Archive;
+use th04_formats::pi::Pi;
 use th06_engine::{Engine, SCREEN_H, SCREEN_W};
 
-use crate::{make_update, setup};
+use crate::menu::make_menu_update;
+use crate::setup_menu;
 
 /// Invoked from JS once the player selects their game folder. `files` maps each
 /// uploaded file's basename to a `Uint8Array`.
@@ -18,18 +20,26 @@ use crate::{make_update, setup};
 pub async fn start_game(files: js_sys::Object) {
     console_error_panic_hook::set_once();
 
-    // The main data archive is whichever uploaded file parses as a PAR archive
-    // (pick the largest, i.e. 東方幻想.郷 over 幻想郷ED.DAT).
-    let mut best: Option<Vec<u8>> = None;
+    // Parse every uploaded file that's a PAR archive. The main data archive is
+    // the largest (東方幻想.郷 over 幻想郷ED.DAT); the title art (OP1.PI) lives in
+    // whichever archive has it (usually the menu/OP archive, 幻想郷ED.DAT).
+    let mut archives: Vec<Archive> = Vec::new();
     for entry in js_sys::Object::entries(&files).iter() {
         let pair: js_sys::Array = entry.into();
         let bytes = js_sys::Uint8Array::new(&pair.get(1)).to_vec();
-        let bigger = best.as_ref().map_or(true, |b: &Vec<u8>| bytes.len() > b.len());
-        if bigger && Archive::parse(bytes.clone()).is_ok() {
-            best = Some(bytes);
+        if let Ok(a) = Archive::parse(bytes) {
+            archives.push(a);
         }
     }
-    let arc = Archive::parse(best.expect("no TH04 archive (東方幻想.郷) found")).expect("parse archive");
+    let title_img = archives
+        .iter()
+        .find_map(|a| a.get("OP1.PI"))
+        .and_then(|b| Pi::parse(&b))
+        .map(|pi| (pi.to_rgba(), pi.width as u32, pi.height as u32));
+    let arc = archives
+        .into_iter()
+        .max_by_key(|a| a.entries.len())
+        .expect("no TH04 archive (東方幻想.郷) found");
 
     // WebGL needs the canvas to exist before the adapter is requested.
     let document = web_sys::window().expect("window").document().expect("document");
@@ -46,6 +56,6 @@ pub async fn start_game(files: js_sys::Object) {
     let _ = canvas.focus();
 
     let (engine, surface) = Engine::new_web(canvas.clone()).await;
-    let (textures, dd, sim) = setup(&engine, &arc, "ST00.STD", 2);
-    engine.run_game_web(canvas, surface, "Touhou 4 ~ Lotus Land Story", textures, make_update(sim, dd));
+    let (textures, app) = setup_menu(&engine, &arc, "ST00.STD", title_img);
+    engine.run_game_web(canvas, surface, "Touhou 4 ~ Lotus Land Story", textures, make_menu_update(app));
 }

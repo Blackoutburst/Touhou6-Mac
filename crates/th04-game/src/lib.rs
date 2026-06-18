@@ -15,6 +15,9 @@ use th04_formats::sim::StageSim;
 use th04_formats::stage::Std;
 use th06_engine::{DrawCmd, Engine, Frame, Key, Texture};
 
+pub mod font;
+pub mod menu;
+
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
@@ -24,14 +27,23 @@ const PF_TOP: f32 = 40.0;
 const PF_W: f32 = 384.0;
 const PF_H: f32 = 368.0;
 
+/// One player character's sprite: base texture index (neutral cel; banking
+/// cels follow it), how many cels, the cel size and whether a real sprite
+/// loaded (vs. a solid-colour fallback).
+#[derive(Clone, Copy)]
+pub struct PlayerSprite {
+    base: usize,
+    cels: usize,
+    wh: (f32, f32),
+    has: bool,
+}
+
 /// Texture indices + metadata the per-frame draw needs (the textures
 /// themselves are owned by the engine once the game loop starts).
 pub struct DrawData {
-    player_wh: (f32, f32),
-    has_player_sprite: bool,
-    /// Texture index of the player's first cel; banking cels follow it.
-    player_base: usize,
-    player_cels: usize,
+    /// Player sprites by character: index 0 = Reimu (`MIKO.BFT`), 1 = Marisa
+    /// (`MARI.BFT`); chosen at draw time from the player's `shot_type`.
+    players: [PlayerSprite; 2],
     /// Background tiles are packed into one atlas texture so the whole
     /// background draws in a single batch (per-tile textures = hundreds of
     /// draw calls, which made WebGL drop tiles / flicker).
@@ -57,27 +69,36 @@ pub fn stage_index(std_name: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// Build all textures + draw metadata + the stage sim from an archive.
-pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (Vec<Texture>, DrawData, StageSim) {
-    let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
-    let mut textures: Vec<Texture> = vec![white];
-
-    // Player cels: 0 = neutral, 1 = lean left, 2 = lean right.
-    let player_base = textures.len();
-    let mari = arc.get("MARI.BFT").and_then(|b| Bft::parse(&b));
-    let (player_wh, player_cels) = match &mari {
+/// Load a player character's sprite (cels 0 = neutral, 1 = lean left, 2 = lean
+/// right) into `textures`, or push a single solid fallback if it's missing.
+fn load_player_sprite(engine: &Engine, arc: &Archive, name: &str, fallback: [u8; 4], textures: &mut Vec<Texture>) -> PlayerSprite {
+    let base = textures.len();
+    match arc.get(name).and_then(|b| Bft::parse(&b)) {
         Some(b) => {
-            let cels = b.count.min(3);
+            let cels = b.count.min(3).max(1);
             for n in 0..cels {
                 textures.push(engine.create_texture(&b.decode_rgba(n, Some(0)).unwrap(), b.width as u32, b.height as u32));
             }
-            ((b.width as f32, b.height as f32), cels)
+            PlayerSprite { base, cels, wh: (b.width as f32, b.height as f32), has: true }
         }
         None => {
-            textures.push(engine.create_texture(&[102, 179, 255, 255], 1, 1));
-            ((16.0, 20.0), 1)
+            textures.push(engine.create_texture(&fallback, 1, 1));
+            PlayerSprite { base, cels: 1, wh: (16.0, 20.0), has: false }
         }
-    };
+    }
+}
+
+/// Build all stage textures + draw metadata + the parsed `Std`, without
+/// creating the sim (so the menu can defer that until a character is chosen).
+pub fn build_stage(engine: &Engine, arc: &Archive, std_name: &str) -> (Vec<Texture>, DrawData, Std) {
+    let white = engine.create_texture(&[255, 255, 255, 255], 1, 1);
+    let mut textures: Vec<Texture> = vec![white];
+
+    // Both player characters, so the menu's character choice draws correctly.
+    let players = [
+        load_player_sprite(engine, arc, "MIKO.BFT", [255, 120, 120, 255], &mut textures), // Reimu
+        load_player_sprite(engine, arc, "MARI.BFT", [102, 179, 255, 255], &mut textures), // Marisa
+    ];
 
     // Background tileset (MPN) + layout (MAP), packed into one atlas texture.
     let mpn = arc.get(&std_name.replace(".STD", ".MPN")).and_then(|b| Mpn::parse(&b));
@@ -126,17 +147,8 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
 
     let std = Std::parse(&arc.get(std_name).unwrap_or_default()).expect("parse STD");
     let section_order = std.map_section_order.clone();
-    // Pick the end-of-stage boss from the stage number in the STD name
-    // (`STnn.STD` → stage index nn). shot_type >= 2 = Marisa, who faces Reimu at
-    // the stage-4 rival fight (and vice-versa).
-    let stage_idx = stage_index(std_name);
-    let boss_kind = BossKind::for_stage(stage_idx, shot_type >= 2);
-    let sim = StageSim::new(std, shot_type, boss_kind);
     let dd = DrawData {
-        player_wh,
-        has_player_sprite: mari.is_some(),
-        player_base,
-        player_cels,
+        players,
         tile_atlas,
         tile_cols,
         atlas_w,
@@ -146,7 +158,43 @@ pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (
         map,
         section_order,
     };
+    (textures, dd, std)
+}
+
+/// 0-based player-character index from a `shot_type` (0/1 = Reimu, 2/3 = Marisa).
+fn player_char(shot_type: u8) -> usize {
+    (shot_type >= 2) as usize
+}
+
+/// The end-of-stage boss for a stage + character (`STnn.STD` → stage index nn).
+pub fn boss_for(std_name: &str, shot_type: u8) -> Option<BossKind> {
+    BossKind::for_stage(stage_index(std_name), shot_type >= 2)
+}
+
+/// Build all textures + draw metadata + the stage sim from an archive.
+pub fn setup(engine: &Engine, arc: &Archive, std_name: &str, shot_type: u8) -> (Vec<Texture>, DrawData, StageSim) {
+    let (textures, dd, std) = build_stage(engine, arc, std_name);
+    let sim = StageSim::new(std, shot_type, boss_for(std_name, shot_type));
     (textures, dd, sim)
+}
+
+/// Build the texture set + a [`menu::MenuApp`] for the title→menu→game flow.
+/// `title_img` is the decoded title art (RGBA, width, height) — typically
+/// `OP1.PI` from the `幻想郷ED.DAT` archive; pass `None` for a text-only title.
+pub fn setup_menu(
+    engine: &Engine,
+    arc: &Archive,
+    std_name: &str,
+    title_img: Option<(Vec<u8>, u32, u32)>,
+) -> (Vec<Texture>, menu::MenuApp) {
+    let (mut textures, dd, std) = build_stage(engine, arc, std_name);
+    let title_tex = title_img.map(|(rgba, w, h)| {
+        let idx = textures.len();
+        textures.push(engine.create_texture(&rgba, w, h));
+        (idx, w as f32, h as f32)
+    });
+    let app = menu::MenuApp::new(dd, std, std_name.to_string(), title_tex);
+    (textures, app)
 }
 
 /// 3×5 bitmap digits (one byte per row, low 3 bits, MSB = left column).
@@ -304,15 +352,16 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     // Blink while invulnerable.
     let show = sim.player.invuln == 0 || (sim.frame / 4) % 2 == 0;
     if show {
-        if dd.has_player_sprite {
+        let ps = &dd.players[player_char(sim.player.shot_type)];
+        if ps.has {
             // Banking cel from the player's lean (clamped to what's available).
             let cel = match sim.player.facing.signum() {
                 -1 => 1,
                 1 => 2,
                 _ => 0,
             }
-            .min(dd.player_cels.saturating_sub(1));
-            cmds.push(sprite(dd.player_base + cel, ppx, ppy, dd.player_wh.0, dd.player_wh.1));
+            .min(ps.cels.saturating_sub(1));
+            cmds.push(sprite(ps.base + cel, ppx, ppy, ps.wh.0, ps.wh.1));
         } else {
             cmds.push(solid(ppx, ppy, 16.0, 20.0, [0.4, 0.7, 1.0, 1.0]));
         }
