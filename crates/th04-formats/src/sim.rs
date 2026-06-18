@@ -82,12 +82,18 @@ pub struct StageSim {
     /// Frames remaining on the boss-appears name card (counts down from
     /// [`BOSS_INTRO_FRAMES`] when the boss spawns); 0 = not showing.
     pub boss_intro: u32,
+    /// Player-death explosion: frames remaining (counts down from
+    /// [`DEATH_FX_FRAMES`]) and where the player died. 0 = not showing.
+    pub death_fx: u32,
+    pub death_pos: (i32, i32),
     midboss_done: bool,
     rng: u32,
 }
 
 /// How long the boss name card shows when the boss appears.
 pub const BOSS_INTRO_FRAMES: u32 = 140;
+/// How long the player-death explosion plays.
+pub const DEATH_FX_FRAMES: u32 = 28;
 
 impl StageSim {
     /// Build a sim for a stage. `boss_kind` is the end-of-stage boss
@@ -114,6 +120,8 @@ impl StageSim {
             boss_kind,
             extends_awarded: 0,
             boss_intro: 0,
+            death_fx: 0,
+            death_pos: (0, 0),
             midboss_done: false,
             rng: 0x9e37_79b9,
         }
@@ -363,6 +371,9 @@ impl StageSim {
             }
             if died {
                 self.player_hits += 1;
+                // Death explosion at the spot the player was hit (before respawn).
+                self.death_fx = DEATH_FX_FRAMES;
+                self.death_pos = (px, py);
                 if self.player.hit() {
                     // TH04 clears the screen of bullets when the player dies.
                     for b in self.bullets.bullets.iter_mut() {
@@ -412,6 +423,7 @@ impl StageSim {
             }
         }
         self.boss_intro = self.boss_intro.saturating_sub(1);
+        self.death_fx = self.death_fx.saturating_sub(1);
         if self.phase == Phase::Boss && self.boss.as_ref().map(Boss::done).unwrap_or(true) {
             self.phase = Phase::Cleared;
         }

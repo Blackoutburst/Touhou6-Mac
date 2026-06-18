@@ -340,6 +340,12 @@ fn stage(a: &[String]) {
         }
     }
 
+    // `death` keyword: show the player death explosion for verification.
+    if a.iter().any(|s| s == "death") {
+        sim.death_fx = 14;
+        sim.death_pos = (sim.player.x, sim.player.y);
+    }
+
     let cmds = draw_frame(&sim, &dd);
     let texes: Vec<&th06_engine::Texture> = textures.iter().collect();
     let frame_img = engine.render_to_image(&cmds, &texes, None);

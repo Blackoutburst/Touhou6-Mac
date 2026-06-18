@@ -710,6 +710,15 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
         }
     }
 
+    // Player death explosion at the spot the player was hit.
+    if sim.death_fx > 0 && !dd.bomb_anim.is_empty() {
+        let prog = 1.0 - sim.death_fx as f32 / th04_formats::sim::DEATH_FX_FRAMES as f32;
+        let i = ((prog * dd.bomb_anim.len() as f32) as usize).min(dd.bomb_anim.len() - 1);
+        let (tex, w, h) = dd.bomb_anim[i];
+        let (dx, dy) = (sim.death_pos.0 as f32 / 16.0, sim.death_pos.1 as f32 / 16.0);
+        cmds.push(sprite(tex, dx, dy, w * 1.6, h * 1.6));
+    }
+
     // Bomb: animate the MIKO32 explosion over the player while a bomb is active.
     if sim.player.bombing > 0 && !dd.bomb_anim.is_empty() {
         let prog = 1.0 - sim.player.bombing as f32 / BOMB_FRAMES as f32; // 0 → 1

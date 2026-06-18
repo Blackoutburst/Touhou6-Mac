@@ -351,6 +351,9 @@ Midboss 1 at frame 2400 regardless of stage).
   looping explosion puffs (reusing `bomb_anim`) plus an opening white flash,
   instead of just vanishing. Render with
   `th04-game stage <archive> STnn.STD boss … defeat`.
+- **Player-death explosion — DONE.** A miss now bursts an explosion at the spot
+  the player was hit (`StageSim::death_fx`/`death_pos`/`DEATH_FX_FRAMES`, reusing
+  `bomb_anim`) before the respawn. Verify with the `death` keyword on `stage`.
 - **Still markers (intentional):** the **telegraph effects** (gather/circle/spark
   charge-up glows) stay as translucent markers — they're cosmetic cues, not
   sprites.
