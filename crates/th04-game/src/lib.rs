@@ -11,7 +11,7 @@ use th04_formats::effects::EffectKind;
 use th04_formats::map::{self, Map};
 use th04_formats::mpn::Mpn;
 use th04_formats::par::Archive;
-use th04_formats::player::Input;
+use th04_formats::player::{Input, BOMB_FRAMES};
 use th04_formats::sim::StageSim;
 use th04_formats::stage::Std;
 use th06_engine::{DrawCmd, Engine, Frame, Key, Texture};
@@ -64,6 +64,8 @@ pub struct DrawData {
     /// indexed by cel number; see [`gameft_cel`]. Empty → fall back to the
     /// built-in 5×7 font.
     hud_font: Vec<(usize, f32, f32)>,
+    /// Bomb explosion animation frames (`MIKO32.BFT` cels 0-7).
+    bomb_anim: Vec<(usize, f32, f32)>,
     /// Boss body sprites by kind: the `BSS*.CD2` animation frames (texture +
     /// display size), decoded with the boss's stage `.MPN` palette; rivals reuse
     /// the player sheet (one frame). Missing/empty → fall back to a marker.
@@ -231,6 +233,21 @@ fn build_hud_font(engine: &Engine, arc: &Archive, textures: &mut Vec<Texture>) -
     cels
 }
 
+/// Load the bomb explosion animation (`MIKO32.BFT` cels 0-7).
+fn build_bomb_anim(engine: &Engine, arc: &Archive, textures: &mut Vec<Texture>) -> Vec<(usize, f32, f32)> {
+    let mut frames = Vec::new();
+    if let Some(b) = arc.get("MIKO32.BFT").and_then(|d| Bft::parse(&d)) {
+        for n in 0..b.count.min(8) {
+            if let Some(rgba) = b.decode_rgba(n, Some(0)) {
+                let idx = textures.len();
+                textures.push(engine.create_texture(&rgba, b.width as u32, b.height as u32));
+                frames.push((idx, b.width as f32, b.height as f32));
+            }
+        }
+    }
+    frames
+}
+
 /// Map a character to its `GAMEFT.BFT` cel. The font isn't plain ASCII: the
 /// italic glyph block runs digits `0-9` at cels 160-169, `A-V` at 170-191 and
 /// `W-Z` at 192-195. Unsupported characters (incl. space) return `None`.
@@ -359,6 +376,9 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
     // The real game font (GAMEFT.BFT, 1bpp), for the HUD.
     let hud_font = build_hud_font(engine, arc, &mut textures);
 
+    // Bomb explosion animation (MIKO32.BFT cels 0-7).
+    let bomb_anim = build_bomb_anim(engine, arc, &mut textures);
+
     // Boss body sprites (BSS*.CD2 with each boss's stage palette; rivals reuse
     // the player sheets).
     let boss_sprites = build_boss_sprites(engine, arc, &players, &mut textures);
@@ -382,6 +402,7 @@ pub fn build_all_stages(engine: &Engine, arc: &Archive, stage_names: &[&str]) ->
             players,
             fx: fx.clone(),
             hud_font: hud_font.clone(),
+            bomb_anim: bomb_anim.clone(),
             boss_sprites: boss_sprites.clone(),
             midboss_sprite,
             tile_atlas,
@@ -659,6 +680,14 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
         } else {
             cmds.push(solid(ppx, ppy, 16.0, 20.0, [0.4, 0.7, 1.0, 1.0]));
         }
+    }
+
+    // Bomb: animate the MIKO32 explosion over the player while a bomb is active.
+    if sim.player.bombing > 0 && !dd.bomb_anim.is_empty() {
+        let prog = 1.0 - sim.player.bombing as f32 / BOMB_FRAMES as f32; // 0 → 1
+        let i = ((prog * dd.bomb_anim.len() as f32) as usize).min(dd.bomb_anim.len() - 1);
+        let (tex, w, h) = dd.bomb_anim[i];
+        cmds.push(sprite(tex, ppx, ppy, w * 3.0, h * 3.0));
     }
 
     // Letterbox: hide anything drawn outside the playfield (the scrolling tiles

@@ -306,8 +306,10 @@ impl MenuApp {
                 }
             }
             Screen::Playing { mut sim, stage, mode } => {
-                if back {
-                    Screen::Title // abandon the run
+                // Only Esc abandons the run — Bomb (X) is the in-game bomb, fed
+                // to the sim via map_input, not a menu "back".
+                if inp.pressed(Key::Pause) {
+                    Screen::Title
                 } else {
                     sim.step(&map_input(inp));
                     cmds = draw_frame(&sim, &self.stages[stage].dd);

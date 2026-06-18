@@ -336,6 +336,10 @@ Midboss 1 at frame 2400 regardless of stage).
   line of small blue bullets. Verified in-engine (Reimu's blue-ball orb ring, the
   midboss maid firing). Boss **portraits** (`KAO*.CD2`, decode fine with the
   stage palette) are unused pending the dialogue system.
+- **Bomb effect — DONE.** Triggering a bomb now plays the real explosion
+  animation (`MIKO32.BFT` cels 0-7, `DrawData::bomb_anim`) over the player,
+  stepped across `BOMB_FRAMES`. (Also fixed: pressing X/Bomb in-game was wrongly
+  treated as a menu "back" and abandoned the run — only Esc abandons now.)
 - **Still markers (intentional):** the **telegraph effects** (gather/circle/spark
   charge-up glows) stay as translucent markers — they're cosmetic cues, not
   sprites.

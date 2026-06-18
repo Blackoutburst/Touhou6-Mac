@@ -119,6 +119,13 @@ fn menushot(a: &[String]) {
         f = update(&EInput::synthetic(&[Key::Shoot], &[]));
     }
     save(&f, &engine, &format!("{prefix}_6play.png"));
+    // Fire a bomb, then capture a few frames in to show the explosion effect.
+    update(&press(Key::Bomb));
+    let mut f = update(&none);
+    for _ in 0..30 {
+        f = update(&EInput::synthetic(&[Key::Shoot], &[]));
+    }
+    save(&f, &engine, &format!("{prefix}_7bomb.png"));
 }
 
 /// Dump every cel of a `.BFT` sprite sheet into one PNG grid (magenta = the
