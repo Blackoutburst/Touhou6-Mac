@@ -616,6 +616,31 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
                 }
                 None => cmds.push(solid(bx, by, 56.0, 56.0, [0.85, 0.3, 0.95, 1.0])),
             }
+        } else if !b.done() {
+            // Defeat: a burst of explosions around the boss + an opening flash.
+            let (bx, by) = (b.x as f32 / 16.0, b.y as f32 / 16.0);
+            let df = b.defeat_frame();
+            if df < 14 {
+                let a = 0.7 * (1.0 - df as f32 / 14.0);
+                cmds.push(DrawCmd { tex: 0, dst: [PF_LEFT, PF_TOP, PF_W, PF_H], src: [0.0, 0.0, 1.0, 1.0], tint: [1.0, 1.0, 1.0, a], rot: 0.0 });
+            }
+            if !dd.bomb_anim.is_empty() {
+                let n = dd.bomb_anim.len();
+                for k in 0..10usize {
+                    // Puffs at fixed pseudo-random offsets, each starting at a
+                    // different time then looping, so the blast stays dense
+                    // across the whole defeat sequence.
+                    let start = (k * 7) as u32;
+                    if df < start {
+                        continue;
+                    }
+                    let fi = ((df - start) as usize / 3) % n;
+                    let ox = ((k * 37 % 100) as f32) - 50.0;
+                    let oy = ((k * 53 % 88) as f32) - 44.0;
+                    let (tex, w, h) = dd.bomb_anim[fi];
+                    cmds.push(sprite(tex, bx + ox, by + oy, w * 1.8, h * 1.8));
+                }
+            }
         }
     }
     if let Some(m) = &sim.midboss {

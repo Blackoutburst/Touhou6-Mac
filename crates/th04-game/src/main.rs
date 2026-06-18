@@ -321,6 +321,23 @@ fn stage(a: &[String]) {
         if force_boss {
             sim.boss_intro = sim.boss_intro.max(80);
         }
+        // `defeat` keyword: kill the boss and step into its explosion sequence.
+        if force_boss && a.iter().any(|s| s == "defeat") {
+            for _ in 0..2000 {
+                if let Some(b) = sim.boss.as_mut() {
+                    b.damage(2000);
+                }
+                let mut input = Input::default();
+                input.shoot = true;
+                sim.step(&input);
+                if sim.boss.as_ref().map(|b| b.defeated).unwrap_or(true) {
+                    break;
+                }
+            }
+            for _ in 0..18 {
+                sim.step(&Input::default());
+            }
+        }
     }
 
     let cmds = draw_frame(&sim, &dd);

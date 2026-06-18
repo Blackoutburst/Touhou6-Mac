@@ -303,6 +303,14 @@ impl Boss {
         self.defeated && self.defeat_frame >= BOSS_DEFEAT_FRAMES
     }
 
+    /// Defeat-animation progress (frames since defeat began); pair with
+    /// [`Boss::DEFEAT_FRAMES`] for the 0..1 fraction.
+    pub fn defeat_frame(&self) -> u32 {
+        self.defeat_frame
+    }
+    /// Total frames the defeat (explosion) sequence runs.
+    pub const DEFEAT_FRAMES: u32 = BOSS_DEFEAT_FRAMES;
+
     /// Queue player-shot (or bomb) damage; consumed at the boss's hittest point.
     pub fn damage(&mut self, dmg: i32) {
         if !self.defeated {

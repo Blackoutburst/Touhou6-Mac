@@ -346,6 +346,11 @@ Midboss 1 at frame 2400 regardless of stage).
   animation (`MIKO32.BFT` cels 0-7, `DrawData::bomb_anim`) over the player,
   stepped across `BOMB_FRAMES`. (Also fixed: pressing X/Bomb in-game was wrongly
   treated as a menu "back" and abandoned the run — only Esc abandons now.)
+- **Boss-defeat explosion — DONE.** During the defeat sequence
+  (`Boss::defeat_frame`/`DEFEAT_FRAMES`) the boss bursts into a cluster of
+  looping explosion puffs (reusing `bomb_anim`) plus an opening white flash,
+  instead of just vanishing. Render with
+  `th04-game stage <archive> STnn.STD boss … defeat`.
 - **Still markers (intentional):** the **telegraph effects** (gather/circle/spark
   charge-up glows) stay as translucent markers — they're cosmetic cues, not
   sprites.
