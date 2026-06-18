@@ -275,10 +275,18 @@ fn stage(a: &[String]) {
         _ => None,
     });
 
+    // Optional `shotN` (0=ReimuA 1=ReimuB 2=MarisaA 3=MarisaB) + `powNN` to
+    // exercise the per-character shot geometry.
+    let shot_type = a.iter().find_map(|s| s.strip_prefix("shot").and_then(|n| n.parse::<u8>().ok())).unwrap_or(2);
+    let pow = a.iter().find_map(|s| s.strip_prefix("pow").and_then(|n| n.parse::<u8>().ok()));
+
     let engine = Engine::new();
-    let (textures, dd, mut sim) = setup(&engine, &arc, std_name, 2);
+    let (textures, dd, mut sim) = setup(&engine, &arc, std_name, shot_type);
     if let Some(r) = rank {
         sim.set_rank(r);
+    }
+    if let Some(p) = pow {
+        sim.player.power = p;
     }
     for f in 0..until {
         let mut input = Input::default();

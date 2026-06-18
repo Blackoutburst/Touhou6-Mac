@@ -290,7 +290,6 @@ impl StageSim {
                 }
                 if (s.x - e.x).abs() < ENEMY_HIT && (s.y - e.y).abs() < ENEMY_HIT {
                     e.hp -= s.damage as i16;
-                    s.active = false;
                     if e.hp <= 0 {
                         e.killed = true;
                         self.enemies_killed += 1;
@@ -301,7 +300,12 @@ impl StageSim {
                         let kind = if e.item == 0xFF { 1 } else { e.item };
                         self.items.push(Item { x: e.x, y: e.y, vy: -8, kind, active: true });
                     }
-                    break;
+                    // A piercing laser keeps going (and can hit more enemies);
+                    // an ordinary shot is consumed on the first hit.
+                    if !s.pierce {
+                        s.active = false;
+                        break;
+                    }
                 }
             }
         }
@@ -312,7 +316,9 @@ impl StageSim {
                 for s in self.player.shots.iter_mut() {
                     if s.active && (s.x - b.x).abs() < BOSS_HIT && (s.y - b.y).abs() < BOSS_HIT {
                         b.damage(s.damage);
-                        s.active = false;
+                        if !s.pierce {
+                            s.active = false;
+                        }
                     }
                 }
                 // Destructible satellites (Marisa's bits, hp > 0) can be shot
@@ -336,7 +342,9 @@ impl StageSim {
                 for s in self.player.shots.iter_mut() {
                     if s.active && (s.x - m.x).abs() < MIDBOSS_HIT && (s.y - m.y).abs() < MIDBOSS_HIT {
                         m.damage(s.damage);
-                        s.active = false;
+                        if !s.pierce {
+                            s.active = false;
+                        }
                     }
                 }
             }

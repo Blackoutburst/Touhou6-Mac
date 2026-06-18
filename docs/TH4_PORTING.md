@@ -306,11 +306,15 @@ Midboss 1 at frame 2400 regardless of stage).
   8px on each axis (ReC98 `BULLET_KILLBOX_W/H = TO_SP(8)`,
   `th04/main/bullet/bullet.hpp`; "1×1 hitbox around the player's centre"). Was a
   guessed 6px.
-- **Exact player shot geometry** (still TODO) — the per-character/per-level
-  patterns + Marisa A's option lasers live in asm (`shots_add`/`p_marisa`/
-  `shot_laser`; `SHOT_COUNT` = 68, 12px velocity, laser styles `SLS_*`). The
-  shot *count* now scales with the exact level, but the angles/columns are still
-  a simplified fan/column.
+- **Per-character shot geometry — faithful-structure.** All four shot types are
+  now distinct and scale with the exact shot level: Reimu A = a wide amulet fan,
+  Reimu B = focused central needles (+ a slight fan past level 4), Marisa A =
+  central **piercing lasers** (`PlayerShot::pierce`; 1→4 with power) flanked by
+  amulets, Marisa B = a wide column spread. Piercing shots pass through enemies
+  (and the boss) instead of being consumed. Damage 10 / 12px velocity are exact
+  (ReC98); the precise per-level angles still differ from the byte-exact
+  `th04_main.asm` `shot_*` tables (hand-written x86 — not reliably portable
+  here), so this is feel-faithful, not opcode-exact.
 - **Midboss activation frame** — `MIDBOSS_FRAME` is a placeholder; find the real
   per-stage `frames_until`.
 - **Banking-cel order** — confirm MARI.BFT cel 1/2 = left/right (currently guessed).

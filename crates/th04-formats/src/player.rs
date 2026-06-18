@@ -76,6 +76,9 @@ pub struct PlayerShot {
     pub vy: i32,
     pub damage: i32,
     pub active: bool,
+    /// Piercing (Marisa A's laser): stays alive through enemies instead of
+    /// being consumed on the first hit.
+    pub pierce: bool,
 }
 
 pub struct Player {
@@ -195,31 +198,87 @@ impl Player {
     }
 
     fn add_shot(&mut self, x: i32, y: i32, vx: i32, vy: i32, damage: i32) {
-        let s = PlayerShot { x, y, vx, vy, damage, active: true };
+        self.add_shot_ex(x, y, vx, vy, damage, false);
+    }
+
+    fn add_shot_ex(&mut self, x: i32, y: i32, vx: i32, vy: i32, damage: i32, pierce: bool) {
+        let s = PlayerShot { x, y, vx, vy, damage, active: true, pierce };
         match self.shots.iter_mut().find(|t| !t.active) {
             Some(slot) => *slot = s,
             None => self.shots.push(s),
         }
     }
 
-    /// Per-character forward shot, widening/multiplying with power. Reimu
-    /// (types 0/1) fires a spreading fan; Marisa (2/3) fires tightly-packed
-    /// concentrated columns. Damage 10 (RE). The exact per-level tables (and
-    /// Marisa A's lasers / options) are simplified pending full RE.
+    /// Fire the current frame's shots for the chosen character. Each of the four
+    /// shot types has a distinct, per-level-scaling pattern (Reimu A wide fan,
+    /// Reimu B focused needles, Marisa A piercing lasers + side amulets, Marisa
+    /// B wide spread). Damage 10 / shot velocity 12px are exact (ReC98) and the
+    /// shot *count* tracks the exact [`Player::shot_level`]; the precise angles
+    /// are faithful-structure, not the byte-exact `th04_main.asm` `shot_*` tables.
     fn fire(&mut self) {
-        let level = self.shot_level();
-        let n = 2 + level;
-        let reimu = self.shot_type < 2;
+        let l = self.shot_level();
+        match self.shot_type {
+            0 => self.fire_reimu_a(l),
+            1 => self.fire_reimu_b(l),
+            2 => self.fire_marisa_a(l),
+            _ => self.fire_marisa_b(l),
+        }
+    }
+
+    /// Spawn one straight-up shot at an x-offset (subpixels) from the player.
+    fn shot_up(&mut self, dx: i32, damage: i32, pierce: bool) {
+        self.add_shot_ex(self.x + dx, self.y, 0, -SHOT_SPEED, damage, pierce);
+    }
+    /// Spawn one shot at an angle offset (256-dir units) from straight up.
+    fn shot_fan(&mut self, off: i32, damage: i32) {
+        let (vx, vy) = vector2(ANGLE_UP.wrapping_add(off as u8), SHOT_SPEED);
+        self.add_shot(self.x, self.y, vx, vy, damage);
+    }
+
+    /// Reimu A — a forward amulet fan that widens with power.
+    fn fire_reimu_a(&mut self, level: i32) {
+        let n = 2 + level; // 2..11
         for i in 0..n {
             let off = 2 * i - (n - 1); // symmetric about 0
-            if reimu {
-                let angle = ANGLE_UP.wrapping_add((off * 3) as u8); // fan, 3 units apart
-                let (vx, vy) = vector2(angle, SHOT_SPEED);
-                self.add_shot(self.x, self.y, vx, vy, SHOT_DAMAGE);
-            } else {
-                let col = off * 5 * SUBPIXEL / 2; // packed parallel columns
-                self.add_shot(self.x + col, self.y, 0, -SHOT_SPEED, SHOT_DAMAGE);
-            }
+            self.shot_fan(off * 4, SHOT_DAMAGE); // 4 units apart — a wide spread
+        }
+    }
+
+    /// Reimu B — focused needles: a tight, mostly-forward column that adds a
+    /// narrow fan with power.
+    fn fire_reimu_b(&mut self, level: i32) {
+        let pairs = 1 + level; // straight needles down the centre
+        for i in 0..pairs {
+            let dx = (i - pairs / 2) * SUBPIXEL; // packed 1px apart
+            self.shot_up(dx, SHOT_DAMAGE, false);
+        }
+        if level >= 4 {
+            self.shot_fan(-2, SHOT_DAMAGE); // a slight fan at higher power
+            self.shot_fan(2, SHOT_DAMAGE);
+        }
+    }
+
+    /// Marisa A — central piercing laser(s) (more with power) flanked by amulets.
+    fn fire_marisa_a(&mut self, level: i32) {
+        let lasers = 1 + level / 3; // 1..4 piercing columns
+        for i in 0..lasers {
+            let dx = (2 * i - (lasers - 1)) * 4 * SUBPIXEL;
+            self.shot_up(dx, SHOT_DAMAGE, true); // pierces enemies
+        }
+        // Side amulets fan out as power grows.
+        for i in 0..level {
+            let off = if i % 2 == 0 { -(i + 2) } else { i + 2 };
+            self.shot_fan(off * 2, SHOT_DAMAGE);
+        }
+    }
+
+    /// Marisa B — a wide spread of forward shots.
+    fn fire_marisa_b(&mut self, level: i32) {
+        let n = 2 + level;
+        for i in 0..n {
+            let off = 2 * i - (n - 1);
+            // Wide columns spread across the front.
+            self.shot_up(off * 4 * SUBPIXEL, SHOT_DAMAGE, false);
         }
     }
 
@@ -326,14 +385,30 @@ mod tests {
     }
 
     #[test]
-    fn marisa_fires_concentrated_columns() {
-        let mut p = Player::new(2); // Marisa
+    fn marisa_a_fires_a_piercing_laser() {
+        let mut p = Player::new(2); // Marisa A
         let mut input = Input::default();
         input.shoot = true;
         p.update(&input);
-        // all shots travel straight up (no x velocity)
-        assert!(p.active_shots() >= 2);
-        assert!(p.shots.iter().filter(|s| s.active).all(|s| s.vx == 0 && s.vy < 0));
+        // At least one shot is a straight-up piercing laser.
+        assert!(p.active_shots() >= 1);
+        assert!(p.shots.iter().filter(|s| s.active).any(|s| s.pierce && s.vx == 0 && s.vy < 0));
+    }
+
+    #[test]
+    fn reimu_b_is_more_focused_than_marisa_b() {
+        // At the same power, Reimu B's needles stay near the centre column while
+        // Marisa B's spread fans wide.
+        let level_power = SHOT_LEVEL_TO_POWER[4]; // a mid power level
+        let spread = |shot_type: u8| {
+            let mut p = Player::new(shot_type);
+            p.add_power(level_power);
+            let mut input = Input::default();
+            input.shoot = true;
+            p.update(&input);
+            p.shots.iter().filter(|s| s.active).map(|s| (s.x - p.x).abs()).max().unwrap_or(0)
+        };
+        assert!(spread(1) < spread(3), "Reimu B should be tighter than Marisa B");
     }
 
     #[test]
