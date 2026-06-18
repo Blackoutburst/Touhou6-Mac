@@ -33,6 +33,11 @@ const SHOT_SPEED: i32 = 12 * SUBPIXEL;
 const SHOT_INTERVAL: u8 = 4;
 
 pub const POWER_MAX: u8 = 128;
+/// Power gained per small power item, and the full-power ("F") item value.
+/// (TH04 mechanic; exact per-item amounts pending ReC98 — small = 1.)
+pub const POWER_PER_ITEM: u8 = 1;
+/// Power lost on a miss — TH04 drops the shot a tier when you die.
+pub const POWER_LOSS_ON_DEATH: u8 = 16;
 
 /// Per-frame input (already debounced into held directions).
 #[derive(Default, Clone, Copy, Debug)]
@@ -71,12 +76,20 @@ pub struct Player {
     pub gameover: bool,
     /// Frames of bomb remaining (clears bullets + damages while > 0).
     pub bombing: u32,
+    /// Deathbomb window: frames left to bomb-cancel an incoming death (0 = not
+    /// dying). The hit is committed only when this runs out.
+    pub dying: u32,
+    /// Set for the one frame the player actually loses a life (sim reads it).
+    pub just_died: bool,
     shot_timer: u8,
     pub shots: Vec<PlayerShot>,
 }
 
 /// Invulnerability granted on (re)spawn.
 pub const RESPAWN_INVULN: u32 = 120;
+/// Deathbomb window: bombing within this many frames of being hit cancels the
+/// death. (TH04 mechanic; exact length pending ReC98 — ~8 frames.)
+pub const DEATHBOMB_FRAMES: u32 = 8;
 
 impl Player {
     /// Start at the bottom centre of the playfield with the chosen shot type.
@@ -93,6 +106,8 @@ impl Player {
             invuln: RESPAWN_INVULN,
             gameover: false,
             bombing: 0,
+            dying: 0,
+            just_died: false,
             shot_timer: 0,
             shots: Vec::new(),
         }
@@ -107,18 +122,26 @@ impl Player {
         ((PLAYFIELD_W / 2) * SUBPIXEL, (PLAYFIELD_H - 48) * SUBPIXEL)
     }
 
-    /// True while the player can't be hit (post-respawn or bombing).
+    /// True while the player can't be hit (post-respawn, bombing, or already in
+    /// the deathbomb window).
     pub fn invincible(&self) -> bool {
-        self.invuln > 0 || self.bombing > 0
+        self.invuln > 0 || self.bombing > 0 || self.dying > 0
     }
 
-    /// Take a hit: lose a life and respawn, or set game over at < 0 lives.
-    /// Returns true if the player died (caller may clear bullets, etc.).
-    pub fn hit(&mut self) -> bool {
-        if self.invincible() || self.gameover {
-            return false;
+    /// A bullet/body reached the player: open the deathbomb window (the death is
+    /// only committed when it expires, unless the player bombs first).
+    pub fn begin_dying(&mut self) {
+        if !self.invincible() && !self.gameover {
+            self.dying = DEATHBOMB_FRAMES;
         }
+    }
+
+    /// Commit a death: lose a life + a power tier, respawn (or game over).
+    fn do_death(&mut self) {
         self.lives -= 1;
+        self.power = self.power.saturating_sub(POWER_LOSS_ON_DEATH);
+        self.just_died = true;
+        self.dying = 0;
         if self.lives < 0 {
             self.gameover = true;
         } else {
@@ -127,11 +150,30 @@ impl Player {
             self.y = y;
             self.invuln = RESPAWN_INVULN;
         }
+    }
+
+    /// Kill the player immediately (skipping the deathbomb window). Returns true
+    /// if the death was applied. Mostly for tests / forced deaths.
+    pub fn hit(&mut self) -> bool {
+        if self.invuln > 0 || self.bombing > 0 || self.gameover {
+            return false;
+        }
+        self.do_death();
         true
     }
 
     pub fn active_shots(&self) -> usize {
         self.shots.iter().filter(|s| s.active).count()
+    }
+
+    /// Raise power by `amt` (collecting a power item), clamped to [`POWER_MAX`].
+    pub fn add_power(&mut self, amt: u8) {
+        self.power = self.power.saturating_add(amt).min(POWER_MAX);
+    }
+
+    /// Current shot level (0..=7) from power — drives [`Player::fire`].
+    pub fn shot_level(&self) -> i32 {
+        (self.power as i32 / 16).min(7)
     }
 
     fn add_shot(&mut self, x: i32, y: i32, vx: i32, vy: i32, damage: i32) {
@@ -147,7 +189,7 @@ impl Player {
     /// concentrated columns. Damage 10 (RE). The exact per-level tables (and
     /// Marisa A's lasers / options) are simplified pending full RE.
     fn fire(&mut self) {
-        let level = (self.power as i32 / 16).min(7);
+        let level = self.shot_level();
         let n = 2 + level;
         let reimu = self.shot_type < 2;
         for i in 0..n {
@@ -165,19 +207,35 @@ impl Player {
 
     /// Advance one frame: move + clamp, fire on cadence, update shots.
     pub fn update(&mut self, input: &Input) {
+        self.just_died = false;
         if self.invuln > 0 {
             self.invuln -= 1;
         }
         if self.gameover {
             return;
         }
-        // Bomb: spend one and become invulnerable; the sim clears bullets +
-        // damages everything while `bombing`.
-        if self.bombing > 0 {
+        // Deathbomb window: a bomb here cancels the incoming death; otherwise it
+        // counts down and commits the death when it hits zero.
+        if self.dying > 0 {
+            if input.bomb && self.bombs > 0 {
+                self.bombs -= 1;
+                self.bombing = BOMB_FRAMES;
+                self.dying = 0;
+            } else {
+                self.dying -= 1;
+                if self.dying == 0 {
+                    self.do_death();
+                }
+            }
+        } else if self.bombing > 0 {
+            // Bomb active: invulnerable; the sim clears bullets + damages.
             self.bombing -= 1;
         } else if input.bomb && self.bombs > 0 {
             self.bombs -= 1;
             self.bombing = BOMB_FRAMES;
+        }
+        if self.gameover {
+            return;
         }
         self.focused = input.focus;
 
@@ -258,6 +316,61 @@ mod tests {
         // all shots travel straight up (no x velocity)
         assert!(p.active_shots() >= 2);
         assert!(p.shots.iter().filter(|s| s.active).all(|s| s.vx == 0 && s.vy < 0));
+    }
+
+    #[test]
+    fn power_raises_shot_count_and_death_drops_it() {
+        let mut p = Player::new(0);
+        let mut input = Input::default();
+        input.shoot = true;
+        p.update(&input);
+        let base = p.active_shots();
+        // Power up to the top tier → more shots.
+        p.add_power(POWER_MAX);
+        assert_eq!(p.power, POWER_MAX);
+        assert_eq!(p.shot_level(), 7);
+        for s in p.shots.iter_mut() {
+            s.active = false;
+        }
+        p.shot_timer = 0;
+        p.update(&input);
+        assert!(p.active_shots() > base, "more shots at full power");
+        // A miss drops power a tier.
+        p.invuln = 0;
+        let pw = p.power;
+        p.hit();
+        assert_eq!(p.power, pw - POWER_LOSS_ON_DEATH);
+    }
+
+    #[test]
+    fn deathbomb_within_window_saves_the_life() {
+        let mut p = Player::new(0);
+        p.invuln = 0; // make hittable
+        let lives = p.lives;
+        p.begin_dying();
+        assert!(p.dying > 0);
+        let mut input = Input::default();
+        input.bomb = true;
+        p.update(&input);
+        assert_eq!(p.lives, lives, "deathbomb keeps the life");
+        assert!(p.bombing());
+        assert_eq!(p.dying, 0);
+        assert!(!p.just_died);
+        assert_eq!(p.bombs, 2);
+    }
+
+    #[test]
+    fn missed_deathbomb_commits_the_death() {
+        let mut p = Player::new(0);
+        p.invuln = 0;
+        let lives = p.lives;
+        p.begin_dying();
+        let input = Input::default(); // never bomb
+        for _ in 0..DEATHBOMB_FRAMES {
+            p.update(&input);
+        }
+        assert_eq!(p.lives, lives - 1, "death commits when the window expires");
+        assert!(p.just_died);
     }
 
     #[test]

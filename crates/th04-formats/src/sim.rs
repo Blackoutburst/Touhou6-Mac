@@ -178,6 +178,16 @@ impl StageSim {
     /// Advance the whole stage one frame.
     pub fn step(&mut self, input: &Input) {
         self.player.update(input);
+        // The deathbomb window expired without a bomb → the player just died:
+        // count the miss, burst the death explosion (at the recorded hit spot),
+        // and clear the screen of bullets (TH04 behaviour).
+        if self.player.just_died {
+            self.player_hits += 1;
+            self.death_fx = DEATH_FX_FRAMES;
+            for b in self.bullets.bullets.iter_mut() {
+                b.active = false;
+            }
+        }
 
         // Bomb: while active, keep the screen clear of enemy bullets and chip
         // away at everything on the field.
@@ -372,16 +382,11 @@ impl StageSim {
                 }
             }
             if died {
-                self.player_hits += 1;
-                // Death explosion at the spot the player was hit (before respawn).
-                self.death_fx = DEATH_FX_FRAMES;
+                // Open the deathbomb window; the death only commits if the
+                // player doesn't bomb in time (handled in `Player::update`,
+                // observed via `just_died` at the top of the next frame).
                 self.death_pos = (px, py);
-                if self.player.hit() {
-                    // TH04 clears the screen of bullets when the player dies.
-                    for b in self.bullets.bullets.iter_mut() {
-                        b.active = false;
-                    }
-                }
+                self.player.begin_dying();
             }
         }
 
@@ -393,7 +398,13 @@ impl StageSim {
                 it.y += it.vy;
                 if (it.x - px).abs() < 24 * SUBPIXEL && (it.y - py).abs() < 24 * SUBPIXEL {
                     it.active = false;
-                    self.score += 100;
+                    // Power items raise the shot; point items score. (Kinds: 0 =
+                    // power, 2 = full-power "F"; everything else = point.)
+                    match it.kind {
+                        0 => self.player.add_power(crate::player::POWER_PER_ITEM),
+                        2 => self.player.add_power(crate::player::POWER_MAX),
+                        _ => self.score += 100,
+                    }
                 } else if it.y > 420 * SUBPIXEL {
                     it.active = false;
                 }

@@ -284,9 +284,22 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Exact player shot tables** — Reimu/Marisa A/B × 10 power levels + Marisa A's
   option lasers (the ~40 `shot_*` functions in `th04_main.asm`). Currently a
   simplified fan/column model.
-- **Item drop table** — the real per-enemy drops (`th04/main/item/enemy_drops`)
-  and item kinds/values; currently every kill drops a point item.
-- **Exact hitboxes** + deathbomb window; **power items** raising shot level.
+- **Item drop table** — the per-enemy drop kind comes from the timeline spawn
+  arg (`e.item`); now power items (kind 0 / full-power 2) raise power and point
+  items score. Still TODO: the real "no-drop" sentinel (every kill currently
+  drops something) and exact point-item value scaling.
+- **Power progression — DONE (mechanic).** Power items raise `power` (0..128,
+  `Player::add_power`), the shot scales with `Player::shot_level()` (0..7), and a
+  miss drops a power tier (`POWER_LOSS_ON_DEATH`). Exact per-item amounts /
+  per-level shot *patterns* still need the shot tables (below).
+- **Deathbomb — DONE (mechanic).** A hit opens a `DEATHBOMB_FRAMES` window
+  (`Player::begin_dying`); bombing in it cancels the death, else the death
+  commits (`just_died`, observed by the sim). Window length approximate (~8f)
+  pending ReC98.
+- **Exact player shot tables** (still TODO) — Reimu/Marisa A/B per-level patterns
+  + Marisa A's option lasers; the count scales with power but the geometry is a
+  simplified fan/column. **Exact hitboxes** still TODO (needs the ReC98 px; the
+  player kill-box is an approximate 6px half-extent).
 - **Midboss activation frame** — `MIDBOSS_FRAME` is a placeholder; find the real
   per-stage `frames_until`.
 - **Banking-cel order** — confirm MARI.BFT cel 1/2 = left/right (currently guessed).
