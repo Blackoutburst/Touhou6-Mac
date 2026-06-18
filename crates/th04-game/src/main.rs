@@ -85,10 +85,19 @@ fn menushot(a: &[String]) {
         println!("wrote {}", name);
     };
 
-    // Title → Main (now showing the enabled PRACTICE/EXTRA entries).
+    // Title → Main (now showing the enabled PRACTICE/EXTRA/OPTION entries).
     save(&update(&none), &engine, &format!("{prefix}_0title.png"));
     update(&enter());
     save(&update(&none), &engine, &format!("{prefix}_1main.png"));
+    // OPTION (4 downs to reach it), bump START LIVES (right), then back to Main.
+    for _ in 0..4 {
+        update(&press(Key::Down));
+    }
+    update(&enter());
+    update(&press(Key::Right)); // START LIVES 2 → 3
+    save(&update(&none), &engine, &format!("{prefix}_1opt.png"));
+    update(&press(Key::Pause)); // back to Main (cursor 0)
+    update(&none);
     // Pick PRACTICE START (one down), then Character / Shot / Rank.
     update(&press(Key::Down));
     update(&enter());
@@ -155,8 +164,20 @@ fn stage(a: &[String]) {
     let boss_name = boss_arg.strip_prefix("boss:").map(str::to_string)
         .unwrap_or_else(|| format!("{:?}", default_boss).to_lowercase());
 
+    // Optional difficulty keyword anywhere in the args (default Normal).
+    let rank = a.iter().find_map(|s| match s.as_str() {
+        "easy" => Some(0u8),
+        "normal" => Some(1),
+        "hard" => Some(2),
+        "lunatic" => Some(3),
+        _ => None,
+    });
+
     let engine = Engine::new();
     let (textures, dd, mut sim) = setup(&engine, &arc, std_name, 2);
+    if let Some(r) = rank {
+        sim.set_rank(r);
+    }
     for f in 0..until {
         let mut input = Input::default();
         input.shoot = true;

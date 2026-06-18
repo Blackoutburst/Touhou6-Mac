@@ -31,9 +31,25 @@ enum MainAction {
     Start,
     Practice,
     Extra,
+    Option,
     Disabled,
     Quit,
 }
+
+/// Player-configurable settings (the OPTION screen), applied to fresh runs.
+#[derive(Clone, Copy)]
+struct Config {
+    start_lives: i32,
+    start_bombs: i32,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Config { start_lives: 2, start_bombs: 3 }
+    }
+}
+/// Inclusive adjust ranges for the OPTION settings.
+const LIVES_RANGE: (i32, i32) = (1, 5);
+const BOMBS_RANGE: (i32, i32) = (0, 3);
 
 /// What kind of run is being played (controls what happens after a stage clear).
 #[derive(Clone, Copy, PartialEq)]
@@ -49,7 +65,7 @@ const MAIN_ENTRIES: &[(&str, MainAction)] = &[
     ("PRACTICE START", MainAction::Practice),
     ("EXTRA START", MainAction::Extra),
     ("MUSIC ROOM", MainAction::Disabled),
-    ("OPTION", MainAction::Disabled),
+    ("OPTION", MainAction::Option),
     ("QUIT", MainAction::Quit),
 ];
 
@@ -65,6 +81,8 @@ enum Screen {
     Rank(usize),
     /// Practice stage picker (cursor over stages 1..=6, i.e. indices 0..=5).
     StageSelect(usize),
+    /// Settings editor (cursor over the OPTION rows).
+    Option(usize),
     Playing {
         sim: Box<StageSim>,
         stage: usize,
@@ -90,6 +108,7 @@ pub struct MenuApp {
     character: usize,
     shot: usize,
     rank: usize,
+    config: Config,
     high_score: i64,
     blink: u32,
 }
@@ -104,6 +123,7 @@ impl MenuApp {
             character: 0,
             shot: 0,
             rank: 1, // default Normal
+            config: Config::default(),
             high_score: 0,
             blink: 0,
         }
@@ -113,16 +133,22 @@ impl MenuApp {
         (self.character as u8) * 2 + self.shot as u8
     }
 
-    /// Build a fresh sim for `stage` with the current character selection.
+    /// Build a fresh sim for `stage` with the current character + difficulty.
     fn build_sim(&self, stage: usize) -> StageSim {
         let a = &self.stages[stage];
         let shot_type = self.shot_type();
-        StageSim::new(a.std.clone(), shot_type, boss_for(&a.name, shot_type))
+        let mut sim = StageSim::new(a.std.clone(), shot_type, boss_for(&a.name, shot_type));
+        sim.set_rank(self.rank as u8);
+        sim
     }
 
-    /// Begin a run at `stage` in `mode`.
+    /// Begin a run at `stage` in `mode`, seeding the player from the OPTION
+    /// config (chained stages instead carry over via `StageSim::restore`).
     fn start(&self, stage: usize, mode: Mode) -> Screen {
-        Screen::Playing { sim: Box::new(self.build_sim(stage)), stage, mode }
+        let mut sim = self.build_sim(stage);
+        sim.player.lives = self.config.start_lives;
+        sim.player.bombs = self.config.start_bombs;
+        Screen::Playing { sim: Box::new(sim), stage, mode }
     }
 
     /// What to do once the player confirms difficulty, based on `pending`.
@@ -137,8 +163,12 @@ impl MenuApp {
     /// Advance one frame; returns the frame to draw (and whether to quit).
     pub fn update(&mut self, inp: &Input) -> Frame {
         self.blink = self.blink.wrapping_add(1);
-        let up = inp.pressed(Key::Up) || inp.pressed(Key::Left);
-        let down = inp.pressed(Key::Down) || inp.pressed(Key::Right);
+        let (pu, pd) = (inp.pressed(Key::Up), inp.pressed(Key::Down));
+        let (pl, pr) = (inp.pressed(Key::Left), inp.pressed(Key::Right));
+        // List screens treat left/right as up/down too (forgiving); the OPTION
+        // screen uses the pure left/right to adjust values.
+        let up = pu || pl;
+        let down = pd || pr;
         let confirm = inp.pressed(Key::Shoot) || inp.pressed(Key::Enter);
         let back = inp.pressed(Key::Pause) || inp.pressed(Key::Bomb);
 
@@ -176,6 +206,7 @@ impl MenuApp {
                             Screen::Main(cursor)
                         }
                         MainAction::Disabled => Screen::Main(cursor),
+                        MainAction::Option => Screen::Option(0),
                         action => {
                             self.pending = action;
                             Screen::Char(self.character)
@@ -243,6 +274,30 @@ impl MenuApp {
                     Screen::Rank(self.rank)
                 } else {
                     Screen::StageSelect(cursor)
+                }
+            }
+            Screen::Option(cursor) => {
+                const ROWS: usize = 3; // START LIVES, START BOMBS, EXIT
+                let cursor = step_cursor(cursor, ROWS, pu, pd);
+                // Left/right adjusts the focused setting.
+                let d = (pr as i32) - (pl as i32);
+                if d != 0 {
+                    match cursor {
+                        0 => self.config.start_lives = (self.config.start_lives + d).clamp(LIVES_RANGE.0, LIVES_RANGE.1),
+                        1 => self.config.start_bombs = (self.config.start_bombs + d).clamp(BOMBS_RANGE.0, BOMBS_RANGE.1),
+                        _ => {}
+                    }
+                }
+                self.draw_backdrop(&mut cmds, true);
+                draw_heading(&mut cmds, "OPTION");
+                draw_option_row(&mut cmds, 200.0, "START LIVES", &self.config.start_lives.to_string(), cursor == 0);
+                draw_option_row(&mut cmds, 250.0, "START BOMBS", &self.config.start_bombs.to_string(), cursor == 1);
+                draw_option_row(&mut cmds, 320.0, "EXIT", "", cursor == 2);
+                // EXIT row (or back) returns to the main menu.
+                if back || (confirm && cursor == 2) {
+                    Screen::Main(0)
+                } else {
+                    Screen::Option(cursor)
                 }
             }
             Screen::Playing { mut sim, stage, mode } => {
@@ -366,6 +421,25 @@ fn draw_menu_list(cmds: &mut Vec<DrawCmd>, top: f32, entries: &[(&str, bool)], c
             draw_text(cmds, SCREEN_W / 2.0 - w / 2.0 + 6.0, y, ">", px, [1.0, 1.0, 0.5, 1.0]);
         }
         draw_text_centered(cmds, SCREEN_W / 2.0, y, label, px, color);
+    }
+}
+
+/// One OPTION row: a left-aligned label and (if any) a `< value >` on the
+/// right; the focused row is highlighted with a bar + arrows.
+fn draw_option_row(cmds: &mut Vec<DrawCmd>, y: f32, label: &str, value: &str, selected: bool) {
+    let px = 4.0;
+    let (lx, rx) = (130.0, 520.0);
+    let color = if selected { [1.0, 1.0, 0.5, 1.0] } else { [0.85, 0.85, 0.9, 1.0] };
+    if selected {
+        cmds.push(fill(lx - 14.0, y - 8.0, rx - lx + 60.0, 36.0, [0.25, 0.20, 0.10, 0.85]));
+    }
+    draw_text(cmds, lx, y, label, px, color);
+    if !value.is_empty() {
+        if selected {
+            draw_text(cmds, rx - 36.0, y, "<", px, color);
+            draw_text(cmds, rx + 36.0, y, ">", px, color);
+        }
+        draw_text_centered(cmds, rx, y, value, px, color);
     }
 }
 

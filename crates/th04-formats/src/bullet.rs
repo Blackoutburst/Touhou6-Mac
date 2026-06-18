@@ -19,6 +19,10 @@ const DECEL_THRESHOLD: i32 = 64;
 const DECEL_FRAMES: i32 = 32;
 
 /// Bullet group ids (ReC98 `bullet_group_t`). `_AIMED` puts 0° at the player.
+/// Default difficulty rank (Normal) — the rank the ported patterns are authored
+/// at, so [`BulletPool::tuned_count`] is a no-op until a stage sets otherwise.
+pub const RANK_NORMAL: u8 = 1;
+
 pub mod group {
     pub const SINGLE: u8 = 0x00;
     pub const SINGLE_AIMED: u8 = 0x01;
@@ -114,11 +118,43 @@ pub struct Bullet {
 pub struct BulletPool {
     pub bullets: Vec<Bullet>,
     rng: u32,
+    /// Difficulty rank (0 = Easy, 1 = Normal, 2 = Hard, 3 = Lunatic). Scales the
+    /// bullet count of multi-bullet patterns (`bullet_template_tune`).
+    rank: u8,
 }
 
 impl BulletPool {
     pub fn new() -> Self {
-        Self { bullets: Vec::new(), rng: 0x2345_6789 }
+        Self { bullets: Vec::new(), rng: 0x2345_6789, rank: RANK_NORMAL }
+    }
+
+    /// Set the difficulty rank (clamped to 0..=3); affects multi-bullet counts.
+    pub fn set_rank(&mut self, rank: u8) {
+        self.rank = rank.min(3);
+    }
+
+    /// `bullet_template_tune` (counts): scale a multi-bullet pattern's count by
+    /// the difficulty rank. A no-op at Normal (matching the ported patterns,
+    /// which are authored at Normal rank); Easy fires fewer, Hard/Lunatic more.
+    /// Single/forced-single groups are never scaled. The exact ReC98 per-pattern
+    /// deltas are a TODO — this is a documented proportional approximation.
+    fn tuned_count(&self, group: u8, count: i32) -> i32 {
+        use group::*;
+        let multi = matches!(
+            group,
+            RING | RING_AIMED | SPREAD | SPREAD_AIMED | STACK | STACK_AIMED
+                | RANDOM_ANGLE | RANDOM_ANGLE_AND_SPEED
+        );
+        if !multi {
+            return count;
+        }
+        let (num, den) = match self.rank {
+            0 => (3, 4), // Easy
+            2 => (5, 4), // Hard
+            3 => (3, 2), // Lunatic
+            _ => (1, 1), // Normal
+        };
+        ((count * num) / den).max(1)
     }
 
     pub fn active_count(&self) -> usize {
@@ -173,7 +209,8 @@ impl BulletPool {
         let ox = ex + t.origin_x as i32;
         let oy = ey + t.origin_y as i32;
         let speed = t.speed as i32;
-        let count = (t.count as i32).max(1); // guard ZUN's divide-by-zero bug
+        // Guard ZUN's divide-by-zero bug, then scale by difficulty rank.
+        let count = self.tuned_count(t.group, (t.count as i32).max(1));
         let aimed = matches!(
             t.group,
             SINGLE_AIMED | RING_AIMED | SPREAD_AIMED | STACK_AIMED
@@ -373,6 +410,22 @@ mod tests {
         assert_eq!(p.active_count(), 8);
         let angles: Vec<u8> = p.bullets.iter().map(|b| b.angle).collect();
         assert_eq!(angles, [0, 32, 64, 96, 128, 160, 192, 224]);
+    }
+
+    #[test]
+    fn rank_scales_ring_count() {
+        // Normal = no-op; Easy fewer, Hard/Lunatic more. Single is never scaled.
+        for (rank, expect) in [(0u8, 6), (1, 8), (2, 10), (3, 12)] {
+            let mut p = BulletPool::new();
+            p.set_rank(rank);
+            p.spawn(&fast_ring(8), 0, 0, (0, 0));
+            assert_eq!(p.active_count(), expect, "rank {rank}");
+        }
+        let mut p = BulletPool::new();
+        p.set_rank(3); // Lunatic
+        let single = BulletTemplate { group: group::SINGLE, count: 1, speed: 64, ..Default::default() };
+        p.spawn(&single, 0, 0, (0, 0));
+        assert_eq!(p.active_count(), 1, "single unaffected by rank");
     }
 
     #[test]

@@ -326,11 +326,23 @@ Midboss 1 at frame 2400 regardless of stage).
     are granted at `EXTEND_SCORES` milestones (`StageSim::award_extends`; the
     exact ReC98 thresholds are a TODO — current values are tuned to this port's
     simplified scoring). A session hi-score is shown on the title/menu/result.
+  - **Difficulty tunes bullet counts** (`bullet.rs` `tuned_count` +
+    `BulletPool::set_rank`, threaded via `StageSim::set_rank` ← the menu's rank):
+    multi-bullet patterns (rings/spreads/stacks/random) scale ×3⁄4 (Easy) / ×1
+    (Normal, no-op — the rank the patterns are authored at) / ×5⁄4 (Hard) / ×3⁄2
+    (Lunatic); singles never scale. Verified on Orange: 36 bullets (Easy) vs 72
+    (Lunatic) at the same frame. The exact ReC98 per-pattern deltas are a TODO —
+    this is a documented proportional approximation.
+  - **OPTION screen** (`Screen::Option`): edits START LIVES (1–5) and START
+    BOMBS (0–3) with Left/Right; the values seed every fresh run (chained stages
+    carry over instead via `restore`). `MUSIC ROOM` stays disabled (no audio).
   - Entry points: `th04-game menu <archive>` (windowed) and the WASM build (which
     also opens on the menu); offscreen check: `th04-game menushot <archive>`.
+    Difficulty is exercisable offscreen too:
+    `th04-game stage <archive> ST00.STD boss out.png <easy|normal|hard|lunatic>`.
   - **Still TODO: replays** (deprioritized), per-stage progress save, the real
-    font, the `OPTION`/config screen, and the difficulty actually changing
-    bullet counts (patterns are Normal-rank only).
+    `GAMEFT.BFT` font, a fuller `OPTION` (key config / volume once audio exists),
+    and the exact ReC98 per-pattern rank deltas.
 
 ### Build / infra
 - WASM bundle built locally to `web/pkg-th04/` (gitignored). `wasm-pack` is

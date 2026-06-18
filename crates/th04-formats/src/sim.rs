@@ -112,6 +112,12 @@ impl StageSim {
         }
     }
 
+    /// Set the difficulty rank (0 = Easy … 3 = Lunatic); scales enemy/boss
+    /// bullet counts (`bullet_template_tune`). Defaults to Normal.
+    pub fn set_rank(&mut self, rank: u8) {
+        self.bullets.set_rank(rank);
+    }
+
     /// Carry a continuing run's state into this (freshly built) stage: the
     /// player's lives/bombs/power, the accumulated score, and how many extends
     /// have been awarded (so milestones aren't re-granted next stage).
