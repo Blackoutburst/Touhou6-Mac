@@ -288,18 +288,25 @@ Midboss 1 at frame 2400 regardless of stage).
   arg (`e.item`); now power items (kind 0 / full-power 2) raise power and point
   items score. Still TODO: the real "no-drop" sentinel (every kill currently
   drops something) and exact point-item value scaling.
-- **Power progression — DONE (mechanic).** Power items raise `power` (0..128,
-  `Player::add_power`), the shot scales with `Player::shot_level()` (0..7), and a
-  miss drops a power tier (`POWER_LOSS_ON_DEATH`). Exact per-item amounts /
-  per-level shot *patterns* still need the shot tables (below).
+- **Power progression — DONE.** Power items raise `power` (0..128,
+  `Player::add_power`); the shot level is **exact** — `Player::shot_level()`
+  counts the ReC98 `_SHOT_LEVEL_TO_POWER` thresholds `[6,12,16,24,32,48,72,96,
+  128]` (`shot_levels[data].asm`), giving levels 0..9. A miss drops a power tier
+  (`POWER_LOSS_ON_DEATH`). Per-item power amounts are still approximate; the
+  per-level shot *geometry* is still simplified (below).
 - **Deathbomb — DONE (mechanic).** A hit opens a `DEATHBOMB_FRAMES` window
   (`Player::begin_dying`); bombing in it cancels the death, else the death
   commits (`just_died`, observed by the sim). Window length approximate (~8f)
   pending ReC98.
-- **Exact player shot tables** (still TODO) — Reimu/Marisa A/B per-level patterns
-  + Marisa A's option lasers; the count scales with power but the geometry is a
-  simplified fan/column. **Exact hitboxes** still TODO (needs the ReC98 px; the
-  player kill-box is an approximate 6px half-extent).
+- **Player kill-box — EXACT.** A bullet hits when the player's centre is within
+  8px on each axis (ReC98 `BULLET_KILLBOX_W/H = TO_SP(8)`,
+  `th04/main/bullet/bullet.hpp`; "1×1 hitbox around the player's centre"). Was a
+  guessed 6px.
+- **Exact player shot geometry** (still TODO) — the per-character/per-level
+  patterns + Marisa A's option lasers live in asm (`shots_add`/`p_marisa`/
+  `shot_laser`; `SHOT_COUNT` = 68, 12px velocity, laser styles `SLS_*`). The
+  shot *count* now scales with the exact level, but the angles/columns are still
+  a simplified fan/column.
 - **Midboss activation frame** — `MIDBOSS_FRAME` is a placeholder; find the real
   per-stage `frames_until`.
 - **Banking-cel order** — confirm MARI.BFT cel 1/2 = left/right (currently guessed).

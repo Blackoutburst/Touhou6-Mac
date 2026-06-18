@@ -32,9 +32,12 @@ const SCROLL_DY: i32 = 16; // 1px/frame placeholder
 /// to this port's (still-simplified) scoring scale, applied cumulatively across
 /// chained stages. TODO: replace with the ReC98 values once located.
 const EXTEND_SCORES: &[i64] = &[10_000, 30_000, 70_000, 150_000, 300_000];
-// Approximate hit half-extents.
+// Approximate enemy hit half-extent.
 const ENEMY_HIT: i32 = 16 * SUBPIXEL;
-const BULLET_KILL: i32 = 6 * SUBPIXEL;
+/// Player kill-box half-extent — exact ReC98 value (`BULLET_KILLBOX_W/H =
+/// TO_SP(8)`, `th04/main/bullet/bullet.hpp`): a bullet hits when the player's
+/// centre is within 8px of the bullet centre on each axis.
+const BULLET_KILL: i32 = 8 * SUBPIXEL;
 
 /// A dropped item (power / point / …) falling for the player to collect.
 #[derive(Debug, Clone, Copy)]

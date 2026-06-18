@@ -33,6 +33,10 @@ const SHOT_SPEED: i32 = 12 * SUBPIXEL;
 const SHOT_INTERVAL: u8 = 4;
 
 pub const POWER_MAX: u8 = 128;
+/// Power required for each shot level (ReC98 `_SHOT_LEVEL_TO_POWER`,
+/// `th04/main/player/shot_levels[data].asm`): level 1 at power 6, 2 at 12, …,
+/// 9 at 128. The shot level is how many of these thresholds the power has met.
+const SHOT_LEVEL_TO_POWER: [u8; 9] = [6, 12, 16, 24, 32, 48, 72, 96, 128];
 /// Power gained per small power item, and the full-power ("F") item value.
 /// (TH04 mechanic; exact per-item amounts pending ReC98 — small = 1.)
 pub const POWER_PER_ITEM: u8 = 1;
@@ -171,9 +175,10 @@ impl Player {
         self.power = self.power.saturating_add(amt).min(POWER_MAX);
     }
 
-    /// Current shot level (0..=7) from power — drives [`Player::fire`].
+    /// Current shot level (0..=9) from power, via the exact ReC98
+    /// [`SHOT_LEVEL_TO_POWER`] thresholds — drives [`Player::fire`].
     pub fn shot_level(&self) -> i32 {
-        (self.power as i32 / 16).min(7)
+        SHOT_LEVEL_TO_POWER.iter().filter(|&&t| self.power >= t).count() as i32
     }
 
     fn add_shot(&mut self, x: i32, y: i32, vx: i32, vy: i32, damage: i32) {
@@ -328,7 +333,7 @@ mod tests {
         // Power up to the top tier → more shots.
         p.add_power(POWER_MAX);
         assert_eq!(p.power, POWER_MAX);
-        assert_eq!(p.shot_level(), 7);
+        assert_eq!(p.shot_level(), 9); // full power = max level (ReC98 table)
         for s in p.shots.iter_mut() {
             s.active = false;
         }
