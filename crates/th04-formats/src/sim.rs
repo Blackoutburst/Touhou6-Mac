@@ -27,6 +27,22 @@ const ENEMY_POS_RANDOM: i32 = 999 * SUBPIXEL;
 
 const SUBPIXEL: i32 = 16;
 const SCROLL_DY: i32 = 16; // 1px/frame placeholder
+/// Spawn item-arg sentinel: `IT_ENEMY_DROP_NEXT` (-1) — drop the next entry from
+/// the global [`ENEMY_DROPS`] cycle rather than a fixed kind.
+const ENEMY_DROP_NEXT: u8 = 0xFF;
+/// ReC98 `ENEMY_DROPS` (`th04/main/item/enemy_drops[data].asm`): the exact
+/// 64-long cycle of items an `IT_ENEMY_DROP_NEXT` kill drops, advanced per drop.
+/// Kinds: 0 = POWER, 1 = POINT, 2 = DREAM, 3 = BIGPOWER.
+const ENEMY_DROPS: [u8; 64] = [
+    0, 1, 0, 0, 1, 1, 0, 1,
+    0, 1, 1, 1, 0, 0, 0, 2,
+    1, 0, 1, 1, 0, 0, 1, 0,
+    1, 0, 0, 0, 1, 1, 1, 2,
+    0, 1, 0, 0, 1, 1, 0, 1,
+    0, 1, 1, 1, 0, 0, 0, 2,
+    1, 0, 1, 1, 0, 0, 1, 0,
+    1, 0, 0, 0, 1, 1, 1, 3,
+];
 /// Score milestones that each grant one extra life (an "extend"). The exact
 /// TH04 thresholds live in `MAIN.EXE`/the config; these are placeholders tuned
 /// to this port's (still-simplified) scoring scale, applied cumulatively across
@@ -89,6 +105,8 @@ pub struct StageSim {
     /// [`DEATH_FX_FRAMES`]) and where the player died. 0 = not showing.
     pub death_fx: u32,
     pub death_pos: (i32, i32),
+    /// Cursor into [`ENEMY_DROPS`] for `IT_ENEMY_DROP_NEXT` drops.
+    drop_index: usize,
     midboss_done: bool,
     rng: u32,
 }
@@ -125,6 +143,7 @@ impl StageSim {
             boss_intro: 0,
             death_fx: 0,
             death_pos: (0, 0),
+            drop_index: 0,
             midboss_done: false,
             rng: 0x9e37_79b9,
         }
@@ -156,6 +175,21 @@ impl StageSim {
             self.player.lives += 1;
             self.extends_awarded += 1;
         }
+    }
+
+    /// Drop a dead enemy's item: an explicit kind (0..=6) drops as-is; the
+    /// `IT_ENEMY_DROP_NEXT` sentinel pulls the next entry from the global
+    /// [`ENEMY_DROPS`] cycle and advances the cursor. (Associated fn so it can
+    /// borrow only `items`/`drop_index`, disjoint from the enemy loop.)
+    fn push_drop(items: &mut Vec<Item>, drop_index: &mut usize, ex: i32, ey: i32, item_arg: u8) {
+        let kind = if item_arg == ENEMY_DROP_NEXT {
+            let k = ENEMY_DROPS[*drop_index % ENEMY_DROPS.len()];
+            *drop_index += 1;
+            k
+        } else {
+            item_arg
+        };
+        items.push(Item { x: ex, y: ey, vy: -8, kind, active: true });
     }
 
     /// Resolve a spawn coordinate, replacing ENEMY_POS_RANDOM with a random
@@ -206,6 +240,7 @@ impl StageSim {
                         self.enemies_killed += 1;
                         self.score += e.score as i64;
                         self.effects.spark(e.x, e.y); // death puff
+                        Self::push_drop(&mut self.items, &mut self.drop_index, e.x, e.y, e.item);
                     }
                 }
             }
@@ -295,10 +330,7 @@ impl StageSim {
                         self.enemies_killed += 1;
                         self.score += e.score as i64;
                         self.effects.spark(e.x, e.y); // death puff
-                        // Drop an item (kind from the spawn; default to a point
-                        // item). The exact per-enemy drop table is a refinement.
-                        let kind = if e.item == 0xFF { 1 } else { e.item };
-                        self.items.push(Item { x: e.x, y: e.y, vy: -8, kind, active: true });
+                        Self::push_drop(&mut self.items, &mut self.drop_index, e.x, e.y, e.item);
                     }
                     // A piercing laser keeps going (and can hit more enemies);
                     // an ordinary shot is consumed on the first hit.
@@ -497,6 +529,22 @@ mod tests {
             sim.step(&input);
         }
         assert!(sim.enemies_spawned >= 1, "enemy should have spawned");
+    }
+
+    #[test]
+    fn enemy_drop_next_follows_the_cycle() {
+        let mut items = Vec::new();
+        let mut idx = 0;
+        for _ in 0..5 {
+            StageSim::push_drop(&mut items, &mut idx, 0, 0, ENEMY_DROP_NEXT);
+        }
+        let kinds: Vec<u8> = items.iter().map(|i| i.kind).collect();
+        assert_eq!(kinds, &ENEMY_DROPS[0..5]); // POWER,POINT,POWER,POWER,POINT
+        assert_eq!(idx, 5);
+        // An explicit kind drops as-is and does NOT advance the cycle.
+        StageSim::push_drop(&mut items, &mut idx, 0, 0, 3);
+        assert_eq!(items.last().unwrap().kind, 3);
+        assert_eq!(idx, 5);
     }
 
     #[test]

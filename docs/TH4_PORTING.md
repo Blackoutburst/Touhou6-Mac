@@ -288,10 +288,13 @@ Midboss 1 at frame 2400 regardless of stage).
   (`th04/main/item/item.hpp`): `POWER 0, POINT 1, DREAM 2, BIGPOWER 3, BOMB 4,
   1UP 5, FULLPOWER 6`. The sim applies each correctly (power tiers raise power,
   BOMB → +1 bomb, 1UP → +1 life, POINT/DREAM → score) and the MIKO16 item icons
-  map as `16 + kind`. Still TODO: exact per-item power *amounts* (small=1/big=8
-  approx), and the `IT_ENEMY_DROP_NEXT` (-1) drop *sequence* per enemy
-  (`enemy_drops[data].asm`) — the drop kind currently comes from the spawn arg,
-  defaulting to a point item.
+  map as `16 + kind`.
+- **Enemy drop table — EXACT.** A kill whose spawn arg is `IT_ENEMY_DROP_NEXT`
+  (-1 / 0xFF) drops the next entry from the exact 64-long ReC98 `ENEMY_DROPS`
+  cycle (`th04/main/item/enemy_drops[data].asm`) and advances a global cursor
+  (`StageSim::drop_index`, `Self::push_drop`); explicit kinds (0..=6) drop as-is.
+  Bombed kills drop too. Still TODO: exact per-item power *amounts* (small=1 /
+  big=8 approx).
 - **Power progression — DONE.** Power items raise `power` (0..128,
   `Player::add_power`); the shot level is **exact** — `Player::shot_level()`
   counts the ReC98 `_SHOT_LEVEL_TO_POWER` thresholds `[6,12,16,24,32,48,72,96,
