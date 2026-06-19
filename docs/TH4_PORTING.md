@@ -297,8 +297,14 @@ Midboss 1 at frame 2400 regardless of stage).
 - **Item values — DONE.** Power items grant the standard TH04 amounts (small +1,
   big +8; the grant is hardcoded in the pickup asm). DREAM items use the exact
   ReC98 `_DREAM_SCORE_PER_ITEMS` escalation `[0,100,200,400,600,800,1000,1280]`
-  indexed by dream count (`StageSim::dreams`). Point-item value is still a flat
-  100 (the PoC height-bonus scaling is the remaining scoring TODO).
+  indexed by dream count (`StageSim::dreams`).
+- **Point-of-Collection — DONE (faithful-structure).** Once the player rises
+  above the PoC line (`POC_LINE_Y`) every item is pulled to them (autocollect),
+  and point items score by collection height — maximum at/above the PoC,
+  scaling down toward the bottom (`POINT_MIN`..`POINT_MAX`). The exact line +
+  value curve live in `th04_main.asm` (not decompiled), so the line and bounds
+  are documented approximations; the pull + height-scaling *behaviour* is
+  faithful.
 - **Power progression — DONE.** Power items raise `power` (0..128,
   `Player::add_power`); the shot level is **exact** — `Player::shot_level()`
   counts the ReC98 `_SHOT_LEVEL_TO_POWER` thresholds `[6,12,16,24,32,48,72,96,

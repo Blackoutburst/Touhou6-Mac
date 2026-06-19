@@ -20,6 +20,15 @@ const MIDBOSS_HIT: i32 = 24 * SUBPIXEL;
 const MIDBOSS_FRAME: u16 = 2400;
 const PLAYFIELD_W: i32 = 384;
 const PLAYFIELD_H: i32 = 368;
+/// Point of Collection: when the player rises above this line, every item is
+/// pulled to them (autocollect) and point items collected score the maximum.
+/// (TH04 mechanic; the exact line + value curve live in `th04_main.asm`, so the
+/// line and the [`POINT_MIN`]/[`POINT_MAX`] bounds here are documented
+/// approximations — the height-scaling *behaviour* is faithful.)
+const POC_LINE_Y: i32 = 96 * SUBPIXEL;
+/// Point-item value collected at the bottom of the field vs at/above the PoC.
+const POINT_MIN: i64 = 100;
+const POINT_MAX: i64 = 1000;
 /// ReC98 ENEMY_POS_RANDOM (999.0 px): a spawn coordinate of this value means
 /// "pick a random position on that axis" (randring2_next16_mod). Stored as a
 /// subpixel here.
@@ -441,12 +450,20 @@ impl StageSim {
             }
         }
 
-        // 5b. Items fall (initial upward pop, then gravity) and auto-collect.
+        // 5b. Items: fall under gravity, or get pulled to the player once the
+        //     player is above the Point of Collection; then auto-collect.
         {
             let (px, py) = (self.player.x, self.player.y);
+            let poc = py <= POC_LINE_Y && !self.player.gameover;
             for it in self.items.iter_mut() {
-                it.vy = (it.vy + 1).min(40);
-                it.y += it.vy;
+                if poc {
+                    // Pulled to the player (autocollect): home in fast.
+                    it.x += (px - it.x) / 3;
+                    it.y += (py - it.y) / 3;
+                } else {
+                    it.vy = (it.vy + 1).min(40);
+                    it.y += it.vy;
+                }
                 if (it.x - px).abs() < 24 * SUBPIXEL && (it.y - py).abs() < 24 * SUBPIXEL {
                     it.active = false;
                     // Apply the item by its ReC98 kind (item_type_t).
@@ -462,7 +479,17 @@ impl StageSim {
                             self.dreams = (self.dreams + 1).min(DREAM_SCORE.len() - 1);
                             self.score += DREAM_SCORE[self.dreams];
                         }
-                        // POINT (and anything else) → score.
+                        // POINT: value scales with collection height — maximum
+                        // at/above the PoC, falling off toward the bottom.
+                        item::POINT => {
+                            let value = if poc {
+                                POINT_MAX
+                            } else {
+                                let h = (PLAYFIELD_H * SUBPIXEL - it.y).clamp(0, PLAYFIELD_H * SUBPIXEL) as i64;
+                                POINT_MIN + (POINT_MAX - POINT_MIN) * h / (PLAYFIELD_H * SUBPIXEL) as i64
+                            };
+                            self.score += value;
+                        }
                         _ => self.score += 100,
                     }
                 } else if it.y > 420 * SUBPIXEL {
@@ -558,6 +585,31 @@ mod tests {
         StageSim::push_drop(&mut items, &mut idx, 0, 0, 3);
         assert_eq!(items.last().unwrap().kind, 3);
         assert_eq!(idx, 5);
+    }
+
+    #[test]
+    fn point_value_scales_with_height_and_poc() {
+        use crate::player::item;
+        // Collected near the bottom → below the maximum.
+        let mut sim = StageSim::new(tiny_stage(), 0, None);
+        sim.player.invuln = 0;
+        let (px, py) = (sim.player.x, sim.player.y);
+        let before = sim.score;
+        sim.items.push(Item { x: px, y: py, vy: 0, kind: item::POINT, active: true });
+        sim.step(&Input::default());
+        assert!(sim.score - before < POINT_MAX, "bottom point worth less than max");
+
+        // Player above the PoC → a far-below item is pulled up and scores max.
+        let mut sim2 = StageSim::new(tiny_stage(), 0, None);
+        sim2.player.invuln = 0;
+        sim2.player.y = 40 * SUBPIXEL; // above POC_LINE_Y
+        let px2 = sim2.player.x;
+        let before2 = sim2.score;
+        sim2.items.push(Item { x: px2, y: 300 * SUBPIXEL, vy: 0, kind: item::POINT, active: true });
+        for _ in 0..12 {
+            sim2.step(&Input::default());
+        }
+        assert_eq!(sim2.score - before2, POINT_MAX, "PoC collection = max value");
     }
 
     #[test]
