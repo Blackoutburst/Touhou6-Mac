@@ -24,6 +24,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("menu") => menu(&args[1..]),
         Some("menushot") => menushot(&args[1..]),
+        Some("bgmcheck") => bgmcheck(&args[1..]),
         Some("sheet") => sheet(&args[1..]),
         Some("cd2") => cd2(&args[1..]),
         Some("play") => play(&args[1..]),
@@ -34,6 +35,18 @@ fn main() {
 
 fn read_archive(path: &str) -> Archive {
     Archive::parse(std::fs::read(path).expect("read archive")).expect("parse archive")
+}
+
+/// Load pre-rendered BGM: every `*.wav` in a `music/` folder next to the
+/// archive, keyed by lowercase basename (e.g. `st00.wav`, `title.wav`). The
+/// folder is optional (and gitignored) — no folder → no music.
+fn load_music(main_path: &str) -> Vec<(String, Vec<u8>)> {
+    let Some(dir) = Path::new(main_path).parent().map(|d| d.join("music")) else {
+        return Vec::new();
+    };
+    let tracks = th04_game::audio::load_dir(&dir);
+    println!("loaded {} BGM track(s) from {}", tracks.len(), dir.display());
+    tracks
 }
 
 /// Decode the title art (`OP1.PI`). It ships in `幻想郷ED.DAT` (the menu/OP
@@ -53,13 +66,25 @@ fn load_title_image(main_path: &str, main_arc: &Archive) -> Option<(Vec<u8>, u32
     Some((pi.to_rgba(), pi.width as u32, pi.height as u32))
 }
 
+/// Headless check of the BGM pipeline: load the `music/` folder, register the
+/// tracks, and report. `th04-game bgmcheck <archive>`.
+fn bgmcheck(a: &[String]) {
+    let path = a.first().expect("usage: th04-game bgmcheck <archive>");
+    let music = load_music(path);
+    let names: Vec<&str> = music.iter().map(|(n, _)| n.as_str()).collect();
+    println!("tracks: {:?}", names);
+    let _bgm = th04_game::audio::Bgm::new(music); // registers (no device needed to build)
+    println!("Bgm built OK");
+}
+
 /// Title → menu → play, in a window.
 fn menu(a: &[String]) {
     let path = a.first().expect("usage: th04-game menu <archive>");
     let arc = read_archive(path);
     let title_img = load_title_image(path, &arc);
+    let music = load_music(path);
     let engine = Engine::new();
-    let (textures, app) = setup_menu(&engine, &arc, title_img);
+    let (textures, app) = setup_menu(&engine, &arc, title_img, music);
     engine.run_game("Touhou 4 ~ Lotus Land Story", textures, make_menu_update(app));
 }
 
@@ -74,7 +99,7 @@ fn menushot(a: &[String]) {
     let arc = read_archive(path);
     let title_img = load_title_image(path, &arc);
     let engine = Engine::new();
-    let (textures, app) = setup_menu(&engine, &arc, title_img);
+    let (textures, app) = setup_menu(&engine, &arc, title_img, Vec::new());
     let texes: Vec<&th06_engine::Texture> = textures.iter().collect();
     let mut update = make_menu_update(app);
     let none = EInput::default();
@@ -238,11 +263,13 @@ fn title(a: &[String]) {
 
 /// Interactive windowed play (native).
 fn play(a: &[String]) {
-    let arc = read_archive(a.first().expect("usage: th04-game play <archive> <STnn.STD>"));
+    let path = a.first().expect("usage: th04-game play <archive> <STnn.STD>");
+    let arc = read_archive(path);
     let std_name = a.get(1).map(String::as_str).unwrap_or("ST00.STD");
+    let bgm = th04_game::audio::Bgm::new(load_music(path));
     let engine = Engine::new();
     let (textures, dd, sim) = setup(&engine, &arc, std_name, 2 /* Marisa */);
-    engine.run_game("Touhou 4 ~ Lotus Land Story", textures, make_update(sim, dd));
+    engine.run_game("Touhou 4 ~ Lotus Land Story", textures, make_update(sim, dd, bgm, std_name.to_string()));
 }
 
 /// Offscreen single-frame render for verification.

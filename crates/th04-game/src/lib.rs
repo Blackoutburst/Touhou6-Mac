@@ -16,6 +16,7 @@ use th04_formats::sim::StageSim;
 use th04_formats::stage::Std;
 use th06_engine::{DrawCmd, Engine, Frame, Key, Texture};
 
+pub mod audio;
 pub mod font;
 pub mod menu;
 
@@ -453,10 +454,13 @@ pub const STAGE_NAMES: [&str; 7] = [
 /// Build the texture set (all stages preloaded) + a [`menu::MenuApp`] for the
 /// title→menu→game flow. `title_img` is the decoded title art (RGBA, width,
 /// height) — typically `OP1.PI` from `幻想郷ED.DAT`; `None` → a text-only title.
+/// `music` is the pre-rendered BGM as `(wav-name, bytes)` pairs (see
+/// [`audio`]); pass an empty vec for no music.
 pub fn setup_menu(
     engine: &Engine,
     arc: &Archive,
     title_img: Option<(Vec<u8>, u32, u32)>,
+    music: Vec<(String, Vec<u8>)>,
 ) -> (Vec<Texture>, menu::MenuApp) {
     let (mut textures, stages) = build_all_stages(engine, arc, &STAGE_NAMES);
     let title_tex = title_img.map(|(rgba, w, h)| {
@@ -464,7 +468,7 @@ pub fn setup_menu(
         textures.push(engine.create_texture(&rgba, w, h));
         (idx, w as f32, h as f32)
     });
-    let app = menu::MenuApp::new(stages, title_tex);
+    let app = menu::MenuApp::new(stages, title_tex, audio::Bgm::new(music));
     (textures, app)
 }
 
@@ -810,10 +814,20 @@ pub fn map_input(inp: &th06_engine::Input) -> Input {
     }
 }
 
-/// The interactive update closure: step the sim from input, draw the frame.
-pub fn make_update(mut sim: StageSim, dd: DrawData) -> impl FnMut(&th06_engine::Input) -> Frame {
+/// The interactive update closure: step the sim from input, draw the frame, and
+/// keep the right BGM playing (boss theme during the boss phase, else the stage
+/// theme). `std_name` names the stage so the track names can be derived.
+pub fn make_update(
+    mut sim: StageSim,
+    dd: DrawData,
+    mut bgm: audio::Bgm,
+    std_name: String,
+) -> impl FnMut(&th06_engine::Input) -> Frame {
+    let stage = audio::stage_track(&std_name);
+    let boss = audio::boss_track(&std_name);
     move |inp| {
         sim.step(&map_input(inp));
+        bgm.play(if sim.phase == th04_formats::sim::Phase::Boss { &boss } else { &stage });
         Frame { cmds: draw_frame(&sim, &dd), bg: None, quit: false }
     }
 }

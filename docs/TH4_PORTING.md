@@ -419,8 +419,16 @@ still a placeholder.
   the real midboss-activation frames (placeholder), the per-stage midbosses 2–6
   (asm-only), and the stage palettes.
 - **Dialogue** — `.TXT` (scrambled Shift-JIS) + the dialog system.
-- **Music** — `.M26`/`.M86` PMD songs (YM2203/YM2608); needs an FM synth core or
-  pre-rendered audio, then wire into `th06-engine`'s audio.
+- **Music — pipeline DONE (pre-rendered route).** BGM is wired through
+  `th06-engine`'s WAV audio (`crates/th04-game/src/audio.rs`): the menu plays
+  `title.wav`, a stage plays its `stNN.wav`, and the boss phase switches to
+  `stNNb.wav` (named after the `.M86` members, lowercased). The engine **loops**
+  each track, so one loop's worth of audio in the WAV is enough. Native loads
+  `*.wav` from a `music/` folder next to the archive (`audio::load_dir`,
+  gitignored, optional); the WASM build takes them from the upload. No tracks /
+  no device → silent. **Still TODO: the actual renders** — convert the PMD
+  `.M26`/`.M86` to WAV (external PMD player / future FM-synth core); only test
+  tones exist so far. Generate test tones: see `bgmcheck`. SFX are also TODO.
 - **Title/menu — DONE.** `menu.rs` is a state machine driven by the same 60 Hz
   update closure: title (real `OP1.PI` art from `幻想郷ED.DAT`, with the session
   hi-score) → main menu → character (Reimu/Marisa) → shot type (A/B) → difficulty

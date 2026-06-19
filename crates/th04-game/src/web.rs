@@ -24,10 +24,15 @@ pub async fn start_game(files: js_sys::Object) {
     // the largest (東方幻想.郷 over 幻想郷ED.DAT); the title art (OP1.PI) lives in
     // whichever archive has it (usually the menu/OP archive, 幻想郷ED.DAT).
     let mut archives: Vec<Archive> = Vec::new();
+    // Pre-rendered BGM: any uploaded *.wav, keyed by lowercase basename.
+    let mut music: Vec<(String, Vec<u8>)> = Vec::new();
     for entry in js_sys::Object::entries(&files).iter() {
         let pair: js_sys::Array = entry.into();
+        let name = pair.get(0).as_string().unwrap_or_default();
         let bytes = js_sys::Uint8Array::new(&pair.get(1)).to_vec();
-        if let Ok(a) = Archive::parse(bytes) {
+        if name.to_lowercase().ends_with(".wav") {
+            music.push((name.to_lowercase(), bytes));
+        } else if let Ok(a) = Archive::parse(bytes) {
             archives.push(a);
         }
     }
@@ -56,6 +61,6 @@ pub async fn start_game(files: js_sys::Object) {
     let _ = canvas.focus();
 
     let (engine, surface) = Engine::new_web(canvas.clone()).await;
-    let (textures, app) = setup_menu(&engine, &arc, title_img);
+    let (textures, app) = setup_menu(&engine, &arc, title_img, music);
     engine.run_game_web(canvas, surface, "Touhou 4 ~ Lotus Land Story", textures, make_menu_update(app));
 }

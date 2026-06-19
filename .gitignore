@@ -8,3 +8,6 @@ web/pkg-th04/
 Touhou PC98 Collection/
 _extracted_th0*/
 *.hdi
+# Pre-rendered BGM (bring your own renders next to the archive)
+music/
+*.wav

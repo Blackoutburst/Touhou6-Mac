@@ -15,9 +15,10 @@
 //! loop — see [`crate::build_all_stages`]), so the menu can offer any stage and
 //! the sim is built on demand from the chosen stage's [`crate::StageAssets`].
 
-use th04_formats::sim::StageSim;
+use th04_formats::sim::{Phase, StageSim};
 use th06_engine::{DrawCmd, Frame, Input, Key};
 
+use crate::audio::{boss_track, stage_track, Bgm, TITLE_TRACK};
 use crate::font::{draw_text, text_width};
 use crate::{boss_for, draw_frame, map_input, StageAssets};
 
@@ -114,10 +115,11 @@ pub struct MenuApp {
     config: Config,
     high_score: i64,
     blink: u32,
+    bgm: Bgm,
 }
 
 impl MenuApp {
-    pub fn new(stages: Vec<StageAssets>, title_tex: Option<(usize, f32, f32)>) -> Self {
+    pub fn new(stages: Vec<StageAssets>, title_tex: Option<(usize, f32, f32)>, bgm: Bgm) -> Self {
         let font = stages.first().map(|s| s.dd.hud_font.clone()).unwrap_or_default();
         MenuApp {
             screen: Screen::Title,
@@ -131,6 +133,7 @@ impl MenuApp {
             config: Config::default(),
             high_score: 0,
             blink: 0,
+            bgm,
         }
     }
 
@@ -352,6 +355,21 @@ impl MenuApp {
                 }
             }
         };
+
+        // Keep the right BGM playing: stage / boss theme while playing, else the
+        // title theme. (`Bgm::play` is idempotent — safe to call every frame.)
+        let track = match &self.screen {
+            Screen::Playing { sim, stage, .. } => {
+                let name = &self.stages[*stage].name;
+                if sim.phase == Phase::Boss {
+                    boss_track(name)
+                } else {
+                    stage_track(name)
+                }
+            }
+            _ => TITLE_TRACK.to_string(),
+        };
+        self.bgm.play(&track);
 
         Frame { cmds, bg: None, quit }
     }
