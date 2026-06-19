@@ -277,10 +277,19 @@ real archive: ST00→Orange(3050), ST01→Kurumi(4800), ST02→Elly(6000),
 ST03→rival(6000), ST04→Yuuka(9000), ST05→Yuuka6(13300). Stages 2–6 timelines
 already parse/run, so all stages are now reachable end-to-end.
 
-**Remaining boss work:** midbosses 1–3 are asm-only (`@midbossN_update$qv`);
-only midboss 1 is RE'd, and `MIDBOSS_FRAME` is still a placeholder for all stages
-(the boss phase is gated behind a midboss interlude that currently always spawns
-Midboss 1 at frame 2400 regardless of stage).
+**Midbosses — per-stage now.** `Midboss::new(x, kind)` takes the 0-based stage
+(via `BossKind::stage()`): kind 0 is the RE'd-exact stage-1 sweep (`sub_13FB2`);
+kinds 1–5 are distinct faithful-structure patterns (expanding rings / rotating
+spiral / faster sweep variants) with rising HP (`max_hp`), drawn with that
+stage's recoloured midboss sprite. The per-stage `@midbossN_update` are asm-only,
+so 2–6 are feel-faithful, not opcode-exact; `MIDBOSS_FRAME` (when it appears) is
+still a placeholder.
+- **Per-character bombs — faithful-structure.** The bomb now differs by
+  character (the exact `bomb_reimu`/`bomb_marisa` spawn patterns are asm):
+  Reimu's is a wide screen-clearing barrier (lower single-target), Marisa's a
+  concentrated laser that melts the boss (4× the boss damage). Both clear the
+  screen; the deathbomb (`player_bomb` cancelling a death in the window) is
+  already wired.
 - **Exact player shot tables** — Reimu/Marisa A/B × 10 power levels + Marisa A's
   option lasers (the ~40 `shot_*` functions in `th04_main.asm`). Currently a
   simplified fan/column model.

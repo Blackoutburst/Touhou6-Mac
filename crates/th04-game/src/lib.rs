@@ -767,7 +767,7 @@ pub fn draw_frame(sim: &StageSim, dd: &DrawData) -> Vec<DrawCmd> {
     // Boss / midboss HP bar across the top of the playfield.
     let hp = match (&sim.boss, &sim.midboss) {
         (Some(b), _) if !b.defeated => Some((b.hp, b.max_hp)),
-        (_, Some(m)) if !m.defeated => Some((m.hp, 620)),
+        (_, Some(m)) if !m.defeated => Some((m.hp, m.max_hp)),
         _ => None,
     };
     if let Some((cur, max)) = hp {

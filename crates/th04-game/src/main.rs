@@ -311,7 +311,7 @@ fn stage(a: &[String]) {
             };
             sim.boss.get_or_insert_with(make);
         } else {
-            sim.midboss.get_or_insert_with(|| Midboss::new(192 * 16));
+            sim.midboss.get_or_insert_with(|| Midboss::new(192 * 16, th04_game::stage_index(std_name) as u8));
         }
         // Run past the boss intro, then keep going until a frame actually shows
         // danmaku (so the screenshot is representative), capped well above any

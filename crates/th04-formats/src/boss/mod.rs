@@ -72,6 +72,19 @@ impl BossKind {
         }
     }
 
+    /// The 0-based stage index this boss belongs to (the inverse of
+    /// [`BossKind::for_stage`]); drives the per-stage midboss kind.
+    pub fn stage(self) -> usize {
+        match self {
+            BossKind::Orange => 0,
+            BossKind::Kurumi => 1,
+            BossKind::Elly => 2,
+            BossKind::Reimu | BossKind::Marisa => 3,
+            BossKind::Yuuka => 4,
+            BossKind::Yuuka6 => 5,
+        }
+    }
+
     /// The boss that ends stage `stage` (0-based: `ST00` = 0 = stage 1).
     /// Stage 4 (index 3) is the rival fight, decided by the player character:
     /// Reimu's player faces Marisa and vice-versa. Stages with no roster boss
@@ -400,6 +413,11 @@ pub struct Midboss {
     pub x: i32,
     pub y: i32,
     pub hp: i32,
+    pub max_hp: i32,
+    /// Stage index (0..=5). Kind 0 is the RE'd stage-1 midboss (exact sweep);
+    /// 1..=5 are faithful-structure patterns (the per-stage `@midbossN_update`
+    /// are asm-only and not ported byte-exact).
+    pub kind: u8,
     pub phase: u8, // 0 = entrance, 1 = attack
     pub phase_frame: u32,
     pub defeated: bool,
@@ -408,11 +426,16 @@ pub struct Midboss {
 }
 
 impl Midboss {
-    pub fn new(x: i32) -> Self {
+    /// Build the midboss for `kind` (the 0-based stage index) at centre `x`.
+    pub fn new(x: i32, kind: u8) -> Self {
+        // HP rises through the stages; kind 0 keeps the exact RE'd value.
+        let hp = MIDBOSS1_HP + kind as i32 * 300;
         Midboss {
             x,
             y: -32 * SUBPIXEL,
-            hp: MIDBOSS1_HP,
+            hp,
+            max_hp: hp,
+            kind,
             phase: 0,
             phase_frame: 0,
             defeated: false,
@@ -453,21 +476,56 @@ impl Midboss {
                     self.sweep = 1;
                 }
             }
-            _ => {
-                // Attack: sub_13FB2 — symmetric sweeping pair every 8 frames.
-                if self.phase_frame % 8 == 0 {
-                    let t = crate::bullet::BulletTemplate {
-                        group: crate::bullet::group::SINGLE,
-                        count: 1,
-                        speed: 2 * 16,
-                        angle: self.sweep,
-                        ..Default::default()
-                    };
-                    pool.spawn(&t, self.x, self.y - SUBPIXEL, (0, 0));
-                    let mut t2 = t;
-                    t2.angle = 0x80u8.wrapping_sub(self.sweep);
-                    pool.spawn(&t2, self.x, self.y - SUBPIXEL, (0, 0));
+            _ => self.attack(pool),
+        }
+    }
+
+    /// Phase-1 attack. Kind 0 is the exact `sub_13FB2` sweep; kinds 1..=5 are
+    /// distinct faithful-structure patterns (sweep / ring / spiral variants),
+    /// since the per-stage midboss code is asm-only.
+    fn attack(&mut self, pool: &mut BulletPool) {
+        use crate::bullet::{group, BulletTemplate};
+        let (ox, oy) = (self.x, self.y - SUBPIXEL);
+        let one = |pool: &mut BulletPool, angle: u8, speed: u8| {
+            let t = BulletTemplate { group: group::SINGLE, count: 1, speed, angle, ..Default::default() };
+            pool.spawn(&t, ox, oy, (0, 0));
+        };
+        let pf = self.phase_frame;
+        match self.kind {
+            // Stage 1 (exact): symmetric sweeping pair every 8 frames, speed 2px.
+            0 => {
+                if pf % 8 == 0 {
+                    one(pool, self.sweep, 2 * 16);
+                    one(pool, 0x80u8.wrapping_sub(self.sweep), 2 * 16);
                     self.sweep = self.sweep.wrapping_add(0x0c);
+                }
+            }
+            // Expanding rings.
+            1 | 4 => {
+                let period = if self.kind == 1 { 26 } else { 20 };
+                if pf % period == 0 {
+                    let count = if self.kind == 1 { 12 } else { 16 };
+                    let t = BulletTemplate { group: group::RING, count, speed: 2 * 16, angle: self.sweep, ..Default::default() };
+                    pool.spawn(&t, ox, oy, (0, 0));
+                    self.sweep = self.sweep.wrapping_add(0x07);
+                }
+            }
+            // Rotating spiral (one arm; two arms on the final stage).
+            2 | 5 => {
+                if pf % 4 == 0 {
+                    one(pool, self.sweep, 2 * 16);
+                    if self.kind == 5 {
+                        one(pool, self.sweep.wrapping_add(0x80), 2 * 16);
+                    }
+                    self.sweep = self.sweep.wrapping_add(0x09);
+                }
+            }
+            // Faster, denser sweep.
+            _ => {
+                if pf % 6 == 0 {
+                    one(pool, self.sweep, 2 * 16 + 8);
+                    one(pool, 0x80u8.wrapping_sub(self.sweep), 2 * 16 + 8);
+                    self.sweep = self.sweep.wrapping_add(0x10);
                 }
             }
         }
@@ -490,8 +548,16 @@ mod tests {
     }
 
     #[test]
+    fn midboss_kind_scales_hp() {
+        assert_eq!(Midboss::new(0, 0).hp, MIDBOSS1_HP);
+        let m3 = Midboss::new(0, 3);
+        assert!(m3.hp > MIDBOSS1_HP);
+        assert_eq!(m3.max_hp, m3.hp);
+    }
+
+    #[test]
     fn midboss_entrance_then_defeat() {
-        let mut m = Midboss::new(192 * 16);
+        let mut m = Midboss::new(192 * 16, 0);
         let mut pool = BulletPool::new();
         m.damage(100);
         assert_eq!(m.hp, MIDBOSS1_HP);

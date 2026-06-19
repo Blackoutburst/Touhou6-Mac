@@ -244,8 +244,13 @@ impl StageSim {
         }
 
         // Bomb: while active, keep the screen clear of enemy bullets and chip
-        // away at everything on the field.
+        // away at the field. Per-character (faithful-structure; the exact
+        // bomb_reimu/bomb_marisa spawn patterns are in asm): Reimu's bomb is a
+        // wide screen-clearing barrier, Marisa's a concentrated laser that melts
+        // single targets (more boss damage).
         if self.player.bombing() {
+            let marisa = self.player.shot_type >= 2;
+            let boss_dmg = if marisa { 8 } else { 2 };
             for b in self.bullets.bullets.iter_mut() {
                 b.active = false;
             }
@@ -262,17 +267,18 @@ impl StageSim {
                 }
             }
             if let Some(b) = self.boss.as_mut() {
-                b.damage(2);
+                b.damage(boss_dmg);
             }
             if let Some(m) = self.midboss.as_mut() {
-                m.damage(2);
+                m.damage(boss_dmg);
             }
         }
 
         // 1. Trash timeline (the midboss interrupts it mid-stage).
         if self.phase == Phase::Trash {
             if !self.midboss_done && self.midboss.is_none() && self.frame >= MIDBOSS_FRAME {
-                self.midboss = Some(Midboss::new(192 * SUBPIXEL));
+                let mk = self.boss_kind.map(|k| k.stage()).unwrap_or(0) as u8;
+                self.midboss = Some(Midboss::new(192 * SUBPIXEL, mk));
             }
             // Timeline pauses while the midboss is on screen.
             if self.midboss.is_none() {
@@ -569,6 +575,21 @@ mod tests {
             sim.step(&input);
         }
         assert!(sim.enemies_spawned >= 1, "enemy should have spawned");
+    }
+
+    #[test]
+    fn marisa_bomb_hits_harder_than_reimu() {
+        let drop = |shot_type: u8| {
+            let mut sim = StageSim::new(tiny_stage(), shot_type, None);
+            let mut m = Midboss::new(192 * 16, 0);
+            m.phase = 1; // attack phase → damageable
+            let hp0 = m.hp;
+            sim.midboss = Some(m);
+            sim.player.bombing = 60; // bomb active
+            sim.step(&Input::default());
+            hp0 - sim.midboss.as_ref().unwrap().hp
+        };
+        assert!(drop(2) > drop(0), "Marisa's bomb should out-damage Reimu's");
     }
 
     #[test]
