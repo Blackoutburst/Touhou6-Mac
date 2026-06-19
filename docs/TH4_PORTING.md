@@ -293,8 +293,12 @@ Midboss 1 at frame 2400 regardless of stage).
   (-1 / 0xFF) drops the next entry from the exact 64-long ReC98 `ENEMY_DROPS`
   cycle (`th04/main/item/enemy_drops[data].asm`) and advances a global cursor
   (`StageSim::drop_index`, `Self::push_drop`); explicit kinds (0..=6) drop as-is.
-  Bombed kills drop too. Still TODO: exact per-item power *amounts* (small=1 /
-  big=8 approx).
+  Bombed kills drop too.
+- **Item values — DONE.** Power items grant the standard TH04 amounts (small +1,
+  big +8; the grant is hardcoded in the pickup asm). DREAM items use the exact
+  ReC98 `_DREAM_SCORE_PER_ITEMS` escalation `[0,100,200,400,600,800,1000,1280]`
+  indexed by dream count (`StageSim::dreams`). Point-item value is still a flat
+  100 (the PoC height-bonus scaling is the remaining scoring TODO).
 - **Power progression — DONE.** Power items raise `power` (0..128,
   `Player::add_power`); the shot level is **exact** — `Player::shot_level()`
   counts the ReC98 `_SHOT_LEVEL_TO_POWER` thresholds `[6,12,16,24,32,48,72,96,

@@ -37,9 +37,8 @@ pub const POWER_MAX: u8 = 128;
 /// `th04/main/player/shot_levels[data].asm`): level 1 at power 6, 2 at 12, …,
 /// 9 at 128. The shot level is how many of these thresholds the power has met.
 const SHOT_LEVEL_TO_POWER: [u8; 9] = [6, 12, 16, 24, 32, 48, 72, 96, 128];
-/// Power gained per small power item, and per big-power item. (ReC98 item kinds
-/// are exact — see [`item`]; the exact power *amounts* are still approximate:
-/// small = 1, big = 8.)
+/// Power gained per small / big power item — the standard TH04 values (small = 1,
+/// big = 8; the grant is hardcoded in the pickup asm, not a data table).
 pub const POWER_PER_ITEM: u8 = 1;
 pub const BIGPOWER_PER_ITEM: u8 = 8;
 

@@ -33,6 +33,11 @@ const ENEMY_DROP_NEXT: u8 = 0xFF;
 /// ReC98 `ENEMY_DROPS` (`th04/main/item/enemy_drops[data].asm`): the exact
 /// 64-long cycle of items an `IT_ENEMY_DROP_NEXT` kill drops, advanced per drop.
 /// Kinds: 0 = POWER, 1 = POINT, 2 = DREAM, 3 = BIGPOWER.
+/// ReC98 `_DREAM_SCORE_PER_ITEMS` (`th04/main/item/items[data].asm`): the score
+/// a DREAM item gives, indexed by how many have been collected (capped at 7), so
+/// consecutive dream items are worth 100, 200, 400, 600, 800, 1000, 1280.
+const DREAM_SCORE: [i64; 8] = [0, 100, 200, 400, 600, 800, 1000, 1280];
+
 const ENEMY_DROPS: [u8; 64] = [
     0, 1, 0, 0, 1, 1, 0, 1,
     0, 1, 1, 1, 0, 0, 0, 2,
@@ -107,6 +112,8 @@ pub struct StageSim {
     pub death_pos: (i32, i32),
     /// Cursor into [`ENEMY_DROPS`] for `IT_ENEMY_DROP_NEXT` drops.
     drop_index: usize,
+    /// DREAM items collected (caps the [`DREAM_SCORE`] index).
+    dreams: usize,
     midboss_done: bool,
     rng: u32,
 }
@@ -144,6 +151,7 @@ impl StageSim {
             death_fx: 0,
             death_pos: (0, 0),
             drop_index: 0,
+            dreams: 0,
             midboss_done: false,
             rng: 0x9e37_79b9,
         }
@@ -449,7 +457,12 @@ impl StageSim {
                         item::FULLPOWER => self.player.add_power(POWER_MAX),
                         item::BOMB => self.player.bombs += 1,
                         item::ONEUP => self.player.lives += 1,
-                        // POINT / DREAM (and anything else) → score.
+                        item::DREAM => {
+                            // Escalating value per dream item collected.
+                            self.dreams = (self.dreams + 1).min(DREAM_SCORE.len() - 1);
+                            self.score += DREAM_SCORE[self.dreams];
+                        }
+                        // POINT (and anything else) → score.
                         _ => self.score += 100,
                     }
                 } else if it.y > 420 * SUBPIXEL {
@@ -545,6 +558,19 @@ mod tests {
         StageSim::push_drop(&mut items, &mut idx, 0, 0, 3);
         assert_eq!(items.last().unwrap().kind, 3);
         assert_eq!(idx, 5);
+    }
+
+    #[test]
+    fn dream_items_escalate_in_value() {
+        let mut sim = StageSim::new(tiny_stage(), 0, None);
+        let (px, py) = (sim.player.x, sim.player.y);
+        // Consecutive dream items are worth 100, then 200, then 400.
+        for expected in [100i64, 200, 400] {
+            let before = sim.score;
+            sim.items.push(Item { x: px, y: py, vy: 0, kind: crate::player::item::DREAM, active: true });
+            sim.step(&Input::default());
+            assert_eq!(sim.score - before, expected);
+        }
     }
 
     #[test]
